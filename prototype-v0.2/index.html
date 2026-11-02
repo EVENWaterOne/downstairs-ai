@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>楼下的另一面</title>
+<meta name="claude:viewport-fit-sides" content="cover" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Noto+Sans+SC:wght@400;500;600&display=swap" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="plate" aria-label="BLK 317A"><small>Blk</small><b>317A</b></div>
+    <div class="dayinfo">
+      <span class="title" id="dayTitle">　</span>
+      <span class="when"><span id="when">　</span><span class="slots" id="slots" aria-hidden="true"></span></span>
+    </div>
+    <div class="points" id="points" title="这个十年还能花的政策点"></div>
+    <div class="top-actions">
+      <button id="waitBtn" title="过一个时段，大家会按自己的日子走动">等一会儿</button>
+      <button id="endBtn">结束今天</button>
+      <button id="panelBtn" class="panel-toggle">写字板</button>
+      <button id="settingsBtn" class="quiet" title="模型和身份">设置</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="stage">
+      <div class="board" id="board">
+        <span class="where" id="where"></span>
+        <canvas id="map" aria-label="平面图：点格子走过去，点人就对着他说话"></canvas>
+        <div class="toast" id="toast" hidden></div>
+      </div>
+      <div class="talk">
+        <div class="feed" id="feed" aria-live="polite"></div>
+        <form class="composer" id="composer" autocomplete="off">
+          <div class="row">
+            <span class="focus" id="focus"></span>
+            <input id="say" maxlength="300" placeholder="说一句话，在场的人都听得到" />
+            <button class="primary" id="sendBtn" type="submit">说</button>
+          </div>
+          <div class="status" id="status">方向键或 WASD 走动，点地图上的格子走过去。点一个人，就对着他说话；想做什么、想问什么，切到“对 GM”。</div>
+        </form>
+      </div>
+    </section>
+
+    <aside class="panel" id="panel">
+      <nav class="tabs" id="tabs">
+        <button data-tab="game" class="on">游戏端（模拟）</button>
+        <button data-tab="known">你知道的事</button>
+        <button data-tab="calls">调用记录</button>
+      </nav>
+      <div class="tabbody" id="tabbody"></div>
+    </aside>
+  </main>
+</div>
+
+<div class="overlay" id="overlay" hidden><div class="dialog" id="dialog" role="dialog" aria-modal="true"></div></div>
+
+<script src="js/world.js"></script>
+<script src="js/maps.js"></script>
+<script src="js/harness.js"></script>
+<script src="js/sim.js"></script>
+<script src="js/session.js"></script>
+<script src="js/board.js"></script>
+<script src="js/days.js"></script>
+<script src="js/llm.js"></script>
+<script src="js/tokens.js"></script>
+<script src="js/prompts.js"></script>
+<script src="js/mock.js"></script>
+<script src="js/turn.js"></script>
+<script src="js/render.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
