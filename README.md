@@ -67,7 +67,7 @@ node --test prototype-v0.2/tests/*.test.js
 
 ## 许可
 
-代码和文档用 [MIT](LICENSE) 协议。来自 Downstairs · 99 Years 的部分经 team-4 组员同意收录，见 [NOTICE.md](NOTICE.md)。
+目前不提供开源许可证：© 2026 Deqing RUAN，保留所有权利。来自 Downstairs · 99 Years 的部分经 team-4 组员同意收录，见 [NOTICE.md](NOTICE.md)。
 
 ---
 
@@ -87,4 +87,4 @@ The world comes from **Downstairs · 99 Years**, a game by team-4, where the gam
 
 **Docs** are in Chinese: the plan, the world and character bible (sources in §8), and a design note that tags every choice by where it came from. This repository is the V0.2 part of a private research repository; V0.1 and docs such as `docs/DECISIONS.md` mentioned in the notes are not published.
 
-**License:** [MIT](LICENSE) for code and docs. Material from Downstairs · 99 Years is included with the team-4 members' permission; see [NOTICE.md](NOTICE.md).
+**License:** none for now. © 2026 Deqing RUAN, all rights reserved. Material from Downstairs · 99 Years is included with the team-4 members' permission; see [NOTICE.md](NOTICE.md).
