@@ -1,6 +1,6 @@
 # Downstairs AI · 楼下
 
-一个用大模型跑的单人跑团原型。1989 年，新加坡组屋 BLK 317A 刚交钥匙，你是新来的社区工作者，在楼下、走廊和住户家里走动，打字和住户面对面说话。GM 和每位住户各由一次模型调用扮演，中间有一个规则层（Harness）决定哪些事能写进世界、谁知道什么。
+一个用大模型跑的单人跑团原型。1989 年，新加坡组屋 BLK 317A 刚交钥匙，你是新来的社区工作者，一家一家上门，打字和住户面对面说话。GM 和每位住户各由一次模型调用扮演，中间有一个规则层（Harness）决定哪些事能写进世界、谁知道什么。
 
 世界来自 team-4 的游戏 **Downstairs · 99 Years**：游戏本体负责建设、政策和住户满意度，这里是同一个世界的另一个视角。来源见 [NOTICE.md](NOTICE.md)。
 
@@ -10,7 +10,8 @@
 
 原型阶段（M2）：第一个十年（1989–1998）可以玩，中文和英文都有。还没有用真实模型系统地测过效果。
 
-- 八个挑出来的日子，每天从早到晚，想去哪、跟谁说话都可以；平面图上用方向键 / WASD 或点格子走动
+- 八个挑出来的日子，每天从早到晚，想去哪一家、跟谁说话都可以
+- 地图只有住户自己的家（四户人家和 Kumar 他们的宿舍）；点地图上面的门牌去别家，屋里用方向键 / WASD 或点格子走动。楼下和走廊只在话里和旁白里出现
 - 你打的字都是话：对住户说，在场的人都听得到；切到"对 GM"，是玩家身份说的，住户听不到，GM 去做，再告诉你结果
 - 住户只知道自己家、自己所在的地方和自己经历过的事；不会知道自己的将来
 - 住户说方言或外语时，台词下面有一句翻译
@@ -72,7 +73,7 @@ node --test prototype-v0.2/tests/*.test.js
 
 ## English
 
-A single-player tabletop RPG prototype run by language models. It is 1989 and HDB block 317A in Singapore has just been handed over. You are the new community worker: walk the void deck, the corridors and the residents' flats, and type to talk with them face to face. The GM and each resident are separate model calls; a rules layer (the harness) decides what becomes true in the world and who knows what.
+A single-player tabletop RPG prototype run by language models. It is 1989 and HDB block 317A in Singapore has just been handed over. You are the new community worker: go from home to home and type to talk with the residents face to face. The map is only the residents' own homes (four flats and the dormitory room Kumar shares); the void deck and corridors come up in talk and narration. The GM and each resident are separate model calls; a rules layer (the harness) decides what becomes true in the world and who knows what.
 
 The world comes from **Downstairs · 99 Years**, a game by team-4, where the game itself handles building, policy and resident satisfaction; this is another view of the same world. See [NOTICE.md](NOTICE.md).
 

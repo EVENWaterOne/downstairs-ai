@@ -1,131 +1,129 @@
 /* 日子和日程（M2）。
  * 每个十年挑几个「日子」来过，每个日子是完整的一天，玩家在这一天里相对自由（10-28 Polaris：挑日子）。
  * 日子之间的几个月、几年不玩，只换一张标题卡。M3 以后改由规划调用来排；现在第一个十年是写死的 8 个日子。
- * 日程决定每个人每个时段在哪：home（自己家）、away（不在楼里：上班、上学、去巴刹）、corridor、void_deck、dorm。
+ * 11-02 Polaris：只做每个住户自己的家（maps.js）。所以日程只决定每个人每个时段在不在家：
+ *   home 在自己家；也可以写别人家的地图 id（去做客）；PLACES 里的几种都不在地图上，GM 从「各家现在」知道他在哪：
+ *   away 出门了（上班、上学、去巴刹），downstairs 在楼下，working 在楼里干活（Kumar 打扫走廊和楼下）。
+ *   原来在走廊上的时段改成在家（就在自家门口），原来在楼下的大多改成 downstairs；陈阿姨和 Hafiz 有两个楼下的时段改成在家，不然玩家很少碰得到他们。
  * gm 一栏只给 GM 看，是这一天的背景；史实来源见 docs/PROTOTYPE_V0.2_DESIGN.md。不依赖 DOM。 */
 (function (root) {
   "use strict";
   const W = root.V2World, M = root.V2Maps, H = root.V2Harness, B = root.V2Board;
   const LAST_SLOT = H.SLOTS.length - 1;
 
-  // kind：work 平日（日期都是星期一到五，测试会查），rest 周末或节日（日程不同）。overrides：{ 时段: { 角色: 地点 } }，props：这一天临时摆出来的东西
+  // 不在地图上的几种去处：人不在任何一张图上，activity 写这一句，GM 的「各家现在」里看得到
+  const PLACES = {
+    away: { zh: "出门了", en: "out" },
+    downstairs: { zh: "在楼下", en: "downstairs" },
+    working: { zh: "在楼里干活", en: "working around the block" }
+  };
+
+  // kind：work 平日（日期都是星期一到五，测试会查），rest 周末或节日（日程不同）。
+  // player.map：玩家从哪一家开始，站在进门的地方。overrides：{ 时段: { 角色: 去处 } }，props：这一天临时摆出来的东西
   const DAYS = [
     {
       id: "d1989_first", decade: 1, date: { year: 1989, month: 3, day: 6 }, slot: 1, kind: "work",
       title: { zh: "1989 年 3 月 · 上任第一天", en: "March 1989 · Your first day" },
-      player: { map: "office", x: 3, y: 2 },
+      player: { map: "flat_chen" },
       gm: {
-        zh: "玩家今天第一天到 317A 楼下的办公室上班。317A 刚交钥匙几个月，有的人家还在装修，楼下还空荡荡的，老伯们已经在 void deck 摆起象棋。这个月政府刚宣布种族融合政策，楼下没人在谈。今天没有安排大事，让玩家认识人。",
-        en: "The player's first day at the office under 317A. Keys were handed over a few months ago; some flats are still being renovated, the void deck is bare, and the old men have already set up chess. The Ethnic Integration Policy was announced this month; nobody downstairs is talking about it. Nothing big is planned: let the player meet people."
+        zh: "玩家上任第一天，挨家挨户上门认识住户，先从隔壁出租楼里独居的陈阿姨开始。317A 刚交钥匙几个月，有的人家还在装修，屋里还空荡荡的；老伯们已经在楼下摆起象棋。这个月政府刚宣布种族融合政策，没人在谈。今天没有安排大事，让玩家认识人。",
+        en: "The player's first day: going door to door to meet the residents, starting with Mdm Chan, who lives alone in the rental block next door. Keys to 317A were handed over a few months ago; some flats are still being renovated and the homes are half bare; downstairs, the old men have already set up chess. The Ethnic Integration Policy was announced this month; nobody is talking about it. Nothing big is planned: let the player meet people."
       }
     },
     {
       id: "d1990_cny", decade: 1, date: { year: 1990, month: 1, day: 20 }, slot: 1, kind: "rest",
       title: { zh: "1990 年 1 月 · 农历新年前", en: "January 1990 · The week before Chinese New Year" },
-      player: { map: "void_deck", x: 2, y: 5 },
-      props: { corridor: [["laundry_pole", 10, 2]] },
+      player: { map: "flat_lin" },
       gm: {
-        zh: "农历新年前一个星期（这年的初一是 1 月 27 日）。家家户户大扫除、办年货，走廊上晾着被子。陈阿姨一个人过年。林家在商量初一先回哪边父母家。Aisyah 会送糕给邻居。",
-        en: "A week before Chinese New Year (New Year's Day falls on 27 January this year). Spring cleaning and shopping; quilts airing in the corridor. Mdm Chan will spend the New Year alone. The Lims are deciding whose parents to visit first. Aisyah will send kuih round to the neighbours."
+        zh: "农历新年前一个星期（这年的初一是 1 月 27 日）。家家户户在家大扫除、办年货，窗外的竹竿上晾着被子。林家在商量初一先回哪边父母家。陈阿姨一个人过年。Aisyah 会送糕给邻居。",
+        en: "A week before Chinese New Year (New Year's Day falls on 27 January this year). Every family is spring-cleaning and shopping; quilts air on the poles outside the windows. The Lims are deciding whose parents to visit first. Mdm Chan will spend the New Year alone. Aisyah will send kuih round to the neighbours."
       }
     },
     {
       id: "d1990_rain", decade: 1, date: { year: 1990, month: 12, day: 6 }, slot: 3, kind: "work",
       title: { zh: "1990 年 12 月 · 雨季的下午", en: "December 1990 · A monsoon afternoon" },
-      player: { map: "office", x: 3, y: 2 },
-      overrides: { 3: { chen: "void_deck", mak_esah: "void_deck" }, 4: { chen: "void_deck", mak_esah: "void_deck" } },
+      player: { map: "flat_aisyah" },
+      overrides: { 3: { chen: "home", hafiz: "home" }, 4: { mak_esah: "home" } },
       gm: {
-        zh: "十二月，季风季，下了一下午的雨。上个月吴作栋接任总理，十月新加坡和中国建交，报纸电视都在说，楼下偶尔有人聊两句。没有什么特别的事：人在楼下等雨停。",
-        en: "December monsoon; it rains all afternoon. Goh Chok Tong became Prime Minister last month and Singapore established ties with China in October; people mention it now and then downstairs. Nothing in particular happens: people wait for the rain to stop."
+        zh: "十二月，季风季，下了一下午的雨。上个月吴作栋接任总理，十月新加坡和中国建交，报纸电视都在说，有人在家里聊两句。没有什么特别的事：雨把人都关在家里，陈阿姨今天没去巴刹，Hafiz 下不了楼踢球。",
+        en: "December monsoon; it rains all afternoon. Goh Chok Tong became Prime Minister last month and Singapore established ties with China in October; people mention it now and then at home. Nothing in particular happens: the rain keeps everyone in. Mdm Chan hasn't gone to the market, and Hafiz can't go down to play football."
       }
     },
     {
       id: "d1992_raya", decade: 1, date: { year: 1992, month: 4, day: 4 }, slot: 2, kind: "rest",
       title: { zh: "1992 年 4 月 · 开斋节", en: "April 1992 · Hari Raya Puasa" },
-      player: { map: "void_deck", x: 2, y: 5 },
-      props: { void_deck: [["long_table", 9, 3], ["long_table", 10, 3], ["kuih_tray", 11, 3]] },
+      player: { map: "flat_aisyah" },
+      props: { flat_aisyah: [["kuih_tray", 11, 5]] },
       overrides: {
-        2: { rahman: "void_deck", aisyah_kassim: "void_deck", nurul: "void_deck", hafiz: "void_deck", mak_esah: "void_deck" },
-        3: { rahman: "void_deck", aisyah_kassim: "void_deck", nurul: "void_deck", hafiz: "void_deck", mak_esah: "void_deck", chen: "void_deck", junhao: "void_deck" },
-        4: { aisyah_kassim: "void_deck", hafiz: "void_deck", mak_esah: "void_deck" }
+        2: { nurul: "home" },
+        3: { nurul: "home", hafiz: "home", chen: "flat_aisyah", huiling: "flat_aisyah", junhao: "flat_aisyah" },
+        4: { mak_esah: "home" }
       },
       gm: {
-        zh: "开斋节。Aisyah 一家把长木桌搬到 void deck，摆满马来糕和黄姜饭，请邻居来吃。Nurul 刚进理工学院。Mei 一家今年刚来新加坡，住在隔壁楼，还不认识这里的人，今天不在 317A。",
-        en: "Hari Raya Puasa. Aisyah's family carries the long table down to the void deck, loads it with kuih and nasi kuning, and invites the neighbours. Nurul has just entered polytechnic. Mei's family arrived in Singapore this year and rents in the next block; they know no one here and are not at 317A today."
+        zh: "开斋节。Aisyah 一家在家里开门请客（open house），长木桌摆开，摆满马来糕和黄姜饭，邻居进进出出。下午陈阿姨来坐坐，慧玲也带着俊豪来了。Nurul 刚进理工学院，今天在家帮忙。Mei 一家今年刚来新加坡，住在隔壁楼，还不认识这里的人，今天不在 317A。",
+        en: "Hari Raya Puasa. Aisyah's family keeps open house: the long table is out, loaded with kuih and nasi kuning, and neighbours come and go. In the afternoon Mdm Chan drops by, and Hui Ling brings Jun Hao. Nurul has just entered polytechnic and is home helping today. Mei's family arrived in Singapore this year and rents in the next block; they know no one here and are not at 317A today."
       }
     },
     {
       id: "d1994_move", decade: 1, date: { year: 1994, month: 6, day: 11 }, slot: 1, kind: "rest",
       title: { zh: "1994 年 6 月 · 七楼有人搬进来", en: "June 1994 · New neighbours on level 7" },
-      player: { map: "corridor", x: 10, y: 2 },
-      props: { corridor: [["boxes", 15, 1], ["boxes", 16, 1]] },
-      overrides: {
-        1: { wangmei: "corridor", jianguo: "corridor", xiaoyu: "corridor" },
-        2: { wangmei: "corridor", jianguo: "corridor", xiaoyu: "corridor" },
-        3: { jianguo: "corridor" }
-      },
+      player: { map: "flat_mei" },
+      props: { flat_mei: [["boxes", 8, 2], ["boxes", 8, 3]] },
       gm: {
-        zh: "周末。Mei 一家今天搬进七楼那户三房式（原屋主一家移民加拿大），走廊上堆着纸箱，邻居们出来看。王美说标准普通话，楼里老人说福建话、广东话，年轻人说英语。",
-        en: "A weekend. Mei's family moves into the three-room flat on level 7 (the previous owners emigrated to Canada); boxes fill the corridor and neighbours come out to look. Wang Mei speaks standard Mandarin; the old folk speak Hokkien and Cantonese, the young speak English."
+        zh: "周末。Mei 一家今天搬进七楼那户三房式（原屋主一家移民加拿大），屋里堆着纸箱，门开着，邻居有的探头来看。王美说标准普通话，楼里老人说福建话、广东话，年轻人说英语。",
+        en: "A weekend. Mei's family moves into the three-room flat on level 7 (the previous owners emigrated to Canada). Boxes are piled up inside, the door stands open, and some neighbours put their heads in to look. Wang Mei speaks standard Mandarin; the old folk speak Hokkien and Cantonese, the young speak English."
       }
     },
     {
       id: "d1994_cup", decade: 1, date: { year: 1994, month: 12, day: 17 }, slot: 4, kind: "rest",
       title: { zh: "1994 年 12 月 17 日 · 马来西亚杯决赛", en: "17 December 1994 · The Malaysia Cup final" },
-      player: { map: "void_deck", x: 2, y: 5 },
-      props: { void_deck: [["tv", 9, 3]] },
-      overrides: {
-        4: { rahman: "void_deck", hafiz: "void_deck", weiming: "void_deck", junhao: "void_deck", jianguo: "void_deck", chen: "void_deck" },
-        5: { rahman: "void_deck", hafiz: "void_deck", weiming: "void_deck", junhao: "void_deck", jianguo: "void_deck" }
-      },
+      player: { map: "flat_aisyah" },
       gm: {
-        zh: "马来西亚杯决赛之夜，新加坡对彭亨。有人把电视搬到 void deck，楼里的人围着看，Rahman 和 Hafiz、伟明和俊豪、建国都在。新加坡最后 4 比 0 赢了；打完这个赛季，新加坡队就退出了马来西亚的比赛，这时候大家还不知道。",
-        en: "Malaysia Cup final night, Singapore against Pahang. Someone has carried a television down to the void deck and the block crowds round: Rahman and Hafiz, Wei Ming and Jun Hao, Jianguo. Singapore win 4–0; after this season Singapore leave the Malaysian competitions, which nobody knows yet."
+        zh: "马来西亚杯决赛之夜，新加坡对彭亨。家家户户开着电视：Rahman 和 Hafiz 在家里看，伟明和俊豪、建国也守在自家电视前；进球的时候整栋楼都在喊，隔着墙都听得到。新加坡最后 4 比 0 赢了；打完这个赛季，新加坡队就退出了马来西亚的比赛，这时候大家还不知道。",
+        en: "Malaysia Cup final night, Singapore against Pahang. Every flat has the television on: Rahman and Hafiz watch at home, as do Wei Ming and Jun Hao, and Jianguo; when a goal goes in the whole block shouts, loud enough to hear through the walls. Singapore win 4–0; after this season Singapore leave the Malaysian competitions, which nobody knows yet."
       }
     },
     {
       id: "d1997_haze", decade: 1, date: { year: 1997, month: 9, day: 24 }, slot: 1, kind: "work",
       title: { zh: "1997 年 9 月 · 烟霾", en: "September 1997 · The haze" },
-      player: { map: "office", x: 3, y: 2 },
+      player: { map: "flat_chen" },
       gm: {
-        zh: "印尼林火的烟霾笼罩新加坡，空气里一股焦味，这个月空气污染指数最高到过 226。亚洲金融风暴刚开始，报纸说硬盘厂陆续关闭或迁出，伟明和建国都在这一行。学校让孩子留在室内。",
-        en: "Haze from Indonesian forest fires covers Singapore and the air smells burnt; the PSI peaks at 226 this month. The Asian financial crisis is starting and the papers report disk-drive plants closing or leaving; Wei Ming and Jianguo both work in that industry. Schools keep children indoors."
+        zh: "印尼林火的烟霾笼罩新加坡，空气里一股焦味，这个月空气污染指数最高到过 226，各家都关着窗。亚洲金融风暴刚开始，报纸说硬盘厂陆续关闭或迁出，伟明和建国都在这一行。学校让孩子留在室内。玩家今天先上门看看独居的陈阿姨。",
+        en: "Haze from Indonesian forest fires covers Singapore and the air smells burnt; the PSI peaks at 226 this month and every flat keeps its windows shut. The Asian financial crisis is starting and the papers report disk-drive plants closing or leaving; Wei Ming and Jianguo both work in that industry. Schools keep children indoors. The player starts the day by looking in on Mdm Chan, who lives alone."
       }
     },
     {
       id: "d1998_spring", decade: 1, date: { year: 1998, month: 4, day: 16 }, slot: 2, kind: "work",
       title: { zh: "1998 年 4 月", en: "April 1998" },
-      player: { map: "void_deck", x: 2, y: 5 },
-      overrides: { 2: { weiming: "void_deck" }, 3: { weiming: "void_deck" } },
+      player: { map: "flat_lin" },
+      overrides: { 2: { weiming: "home" }, 3: { weiming: "home" } },
       gm: {
-        zh: "经济衰退，裁员潮。伟明年初被裁，到现在快三个月，每天照样穿衬衫出门，家里还不知道；今天中午和下午他坐在楼下。建国在同一轮调整里保住了位子。慧玲在为俊豪的华文发愁。这是第一个十年的最后一个日子。",
-        en: "Recession and retrenchments. Wei Ming was let go early this year; for almost three months he has left every morning in a shirt and his family still does not know. Today at midday and in the afternoon he sits downstairs. Jianguo kept his job in the same round. Hui Ling worries about Jun Hao's Chinese. This is the last day of the first decade."
+        zh: "经济衰退，裁员潮。伟明年初被裁，到现在快三个月，每天照样穿衬衫出门，家里还不知道；今天中午和下午趁家里没人，他回家坐着，傍晚再像下班一样出门，晚上才回来。建国在同一轮调整里保住了位子。慧玲在为俊豪的华文发愁。这是第一个十年的最后一个日子。",
+        en: "Recession and retrenchments. Wei Ming was let go early this year; for almost three months he has left every morning in a shirt and his family still does not know. Today at midday and in the afternoon, with nobody else home, he sits in the flat; in the evening he goes out again as if from work and comes back at night. Jianguo kept his job in the same round. Hui Ling worries about Jun Hao's Chinese. This is the last day of the first decade."
       }
     }
   ];
 
   // 每人每个时段（早上、上午、中午、下午、傍晚、晚上）在哪。work 平日，rest 周末和节日
   const SCHEDULES = {
-    chen: { work: ["void_deck", "void_deck", "home", "away", "void_deck", "home"], rest: ["void_deck", "void_deck", "home", "void_deck", "void_deck", "home"] },
-    weiming: { work: ["home", "away", "away", "away", "away", "home"], rest: ["away", "home", "home", "void_deck", "home", "home"] },
-    huiling: { work: ["home", "away", "away", "away", "home", "home"], rest: ["away", "home", "home", "home", "corridor", "home"] },
-    junhao: { work: ["home", "away", "away", "away", "home", "home"], rest: ["away", "home", "home", "void_deck", "home", "home"] },
-    rahman: { work: ["away", "away", "away", "home", "corridor", "home"], rest: ["home", "home", "home", "home", "corridor", "home"] },
+    chen: { work: ["downstairs", "home", "home", "away", "home", "home"], rest: ["downstairs", "home", "home", "downstairs", "home", "home"] },
+    weiming: { work: ["home", "away", "away", "away", "away", "home"], rest: ["away", "home", "home", "downstairs", "home", "home"] },
+    huiling: { work: ["home", "away", "away", "away", "home", "home"], rest: ["away", "home", "home", "home", "home", "home"] },
+    junhao: { work: ["home", "away", "away", "away", "home", "home"], rest: ["away", "home", "home", "downstairs", "home", "home"] },
+    rahman: { work: ["away", "away", "away", "home", "home", "home"], rest: ["home", "home", "home", "home", "home", "home"] },
     aisyah_kassim: { work: ["away", "home", "home", "home", "home", "home"], rest: ["away", "home", "home", "home", "home", "home"] },
     nurul: { work: ["home", "away", "away", "away", "home", "home"], rest: ["home", "home", "away", "away", "home", "home"] },
-    hafiz: { work: ["home", "away", "away", "void_deck", "void_deck", "home"], rest: ["home", "void_deck", "home", "void_deck", "void_deck", "home"] },
-    mak_esah: { work: ["home", "home", "home", "home", "void_deck", "home"], rest: ["home", "home", "home", "home", "void_deck", "home"] },
-    kumar: { work: ["away", "corridor", "void_deck", "corridor", "dorm", "dorm"], rest: ["dorm", "away", "away", "away", "away", "dorm"] },
-    wangmei: { work: ["away", "away", "away", "home", "corridor", "home"], rest: ["home", "home", "home", "home", "corridor", "home"] },
-    jianguo: { work: ["home", "away", "away", "away", "home", "home"], rest: ["home", "home", "home", "corridor", "home", "home"] },
-    xiaoyu: { work: ["home", "away", "away", "home", "corridor", "home"], rest: ["home", "home", "home", "corridor", "corridor", "home"] }
+    hafiz: { work: ["home", "away", "away", "downstairs", "home", "home"], rest: ["home", "downstairs", "home", "downstairs", "home", "home"] },
+    mak_esah: { work: ["home", "home", "home", "home", "downstairs", "home"], rest: ["home", "home", "home", "home", "downstairs", "home"] },
+    kumar: { work: ["away", "working", "working", "working", "home", "home"], rest: ["home", "away", "away", "away", "away", "home"] },
+    wangmei: { work: ["away", "away", "away", "home", "home", "home"], rest: ["home", "home", "home", "home", "home", "home"] },
+    jianguo: { work: ["home", "away", "away", "away", "home", "home"], rest: ["home", "home", "home", "home", "home", "home"] },
+    xiaoyu: { work: ["home", "away", "away", "home", "home", "home"], rest: ["home", "home", "home", "home", "home", "home"] }
   };
 
-  // 不在家时习惯站的地方；被占了就站旁边
+  // 去别人家做客时习惯站的地方；被占了就站旁边。在自己家站 HOME_SPOT（一家人并排）
   const SPOTS = {
-    void_deck: { chen: [6, 4], mak_esah: [7, 4], kumar: [2, 2], hafiz: [10, 8], junhao: [11, 8], weiming: [13, 4], huiling: [14, 4], rahman: [8, 4], aisyah_kassim: [10, 5], nurul: [11, 5], jianguo: [12, 3], wangmei: [5, 5], xiaoyu: [12, 8] },
-    corridor: { rahman: [12, 2], kumar: [4, 2], wangmei: [17, 1], xiaoyu: [14, 1], jianguo: [11, 1], huiling: [7, 2], aisyah_kassim: [10, 1] },
-    dorm: { kumar: [3, 2] }
+    flat_aisyah: { chen: [9, 4], huiling: [10, 4], junhao: [11, 4] }
   };
   const HOME_SPOT = { flat_chen: [3, 3], flat_lin: [3, 3], flat_aisyah: [3, 4], flat_mei: [3, 4], dorm: [3, 2] };
 
@@ -160,9 +158,11 @@
       if (keep.has(id)) continue;
       const place = placeFor(day, id, slot);
       const a = state.actors[id];
-      if (place === "away") { Object.assign(a, { map: null, x: null, y: null, activity: "" }); continue; }
+      // 出门了、在楼下、在楼里干活：不在地图上，activity 写去处（GM 的「各家现在」用）
+      if (PLACES[place]) { Object.assign(a, { map: null, x: null, y: null, activity: PLACES[place][state.lang] || PLACES[place].zh }); continue; }
       const map = place === "home" ? W.RESIDENTS[a.household].home : place;
-      const spot = place === "home" ? homeSpot(id) : ((SPOTS[map] || {})[id] || null);
+      if (!M.MAPS[map]) { Object.assign(a, { map: null, x: null, y: null, activity: "" }); continue; }
+      const spot = place === "home" ? homeSpot(id) : ((SPOTS[map] || {})[id] || HOME_SPOT[map] || null);
       plan.push({ id, map, spot });
       Object.assign(a, { map: null, x: null, y: null });
     }
@@ -201,7 +201,9 @@
     const p = state.actors.player;
     Object.assign(p, { map: null, x: null, y: null });
     placeBySchedule(state);
-    const at = B.nearestFree(state, day.player.map, day.player.x, day.player.y, { except: "player", noExit: true });
+    // 玩家站在这一家进门的地方
+    const [ex, ey] = M.entryOf(day.player.map);
+    const at = B.nearestFree(state, day.player.map, ex, ey, { except: "player", noExit: true });
     Object.assign(p, { map: day.player.map, x: at[0], y: at[1] });
     state.pending_initiatives = [];
     return { ok: true, day };
@@ -234,5 +236,5 @@
     state.pending_initiatives = (state.pending_initiatives || []).filter((id) => state.actors[id].map !== p.map);
   }
 
-  root.V2Days = { DAYS, SCHEDULES, SPOTS, LAST_SLOT, daysOf, dayById, currentDay, placeFor, placeBySchedule, startDay, begin, nextDay, wait, slotsLeft, clearMet, homeSpot };
+  root.V2Days = { DAYS, SCHEDULES, SPOTS, PLACES, LAST_SLOT, daysOf, dayById, currentDay, placeFor, placeBySchedule, startDay, begin, nextDay, wait, slotsLeft, clearMet, homeSpot };
 })(typeof window !== "undefined" ? window : globalThis);

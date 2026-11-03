@@ -43,7 +43,7 @@
   let session = null;
   // pick：输入框对谁说。"auto" 身边有人就对人说、没人就对 GM；"say" 说出口；"gm" 对 GM 说
   // streaming：GM 正在写、还没校验的几段叙述（流式输出），null 是没有
-  const ui = { focus: null, pick: "auto", thinking: new Set(), spoke: {}, busy: false, tab: "game", dayStartSeq: 0, turns: [], notes: [], walking: null, dirty: true, lastPos: "", streaming: null };
+  const ui = { focus: null, pick: "auto", thinking: new Set(), spoke: {}, busy: false, tab: "game", dayStartSeq: 0, turns: [], notes: [], alone: "", walking: null, dirty: true, lastPos: "", streaming: null };
   const st = () => session.state;
   const renderer = R.createRenderer($("#map"));
 
@@ -51,9 +51,9 @@
     stopWalk();
     session = S.createSession({ lang: settings.lang });
     D.begin(st());
-    Object.assign(ui, { focus: null, pick: "auto", thinking: new Set(), spoke: {}, busy: false, turns: [], notes: [], dayStartSeq: st().seq, streaming: null });
+    Object.assign(ui, { focus: null, pick: "auto", thinking: new Set(), spoke: {}, busy: false, turns: [], notes: [], alone: "", dayStartSeq: st().seq, dayStartTime: Object.assign({}, st().time), streaming: null });
     staticText();
-    setStatus(t("方向键或 WASD 走动，点地图上的格子走过去。点一个人，就对着他说话；想做什么、想问什么，切到“对 GM”。", "Arrow keys or WASD to walk, or tap a square on the map. Tap a person to talk to them; to do something or ask something, switch to “To GM”."));
+    setStatus(t("点地图上面的门牌去别家。方向键或 WASD 走动，点格子走过去；点一个人，就对着他说话；想做什么、想问什么，切到“对 GM”。", "Tap a door plate above the map to go to another home. Arrow keys or WASD to walk, or tap a square; tap a person to talk to them; to do something or ask something, switch to “To GM”."));
     renderAll();
   }
 
@@ -70,6 +70,7 @@
     set("#settingsBtn", t("设置", "Settings"));
     set("#settingsBtn", t("模型和身份", "Model, identity and language"), "title");
     set("#map", t("平面图：点格子走过去，点人就对着他说话", "Floor plan: tap a square to walk there, tap a person to talk to them"), "aria-label");
+    set("#homes", t("去哪一家", "Which home to visit"), "aria-label");
     const tabs = { game: t("游戏端（模拟）", "Game (simulated)"), known: t("你知道的事", "What you know"), calls: t("调用记录", "Call log") };
     document.querySelectorAll("#tabs button").forEach((b) => { b.textContent = tabs[b.dataset.tab]; });
   }
@@ -92,6 +93,48 @@
     $("#settingsBtn").disabled = ui.busy;
     $("#endBtn").classList.toggle("primary", s.time.slot >= D.LAST_SLOT);
     $("#where").textContent = L(M.MAPS[s.actors.player.map].name);
+    renderHomes();
+  }
+
+  // ---------------- 门牌栏（11-02 只剩各家：点一家就上门，不花时间） ----------------
+  // 还没搬来的按不了；家里没人的变淡，点了提示"敲了门，没人在家"（规则在 harness.js 的 canVisit）
+  function renderHomes() {
+    const s = st(), p = s.actors.player;
+    // 重画会把按钮换掉：原来键盘停在哪个门牌上，画完还停在那里
+    const had = document.activeElement && document.activeElement.closest ? document.activeElement.closest("#homes button[data-home]") : null;
+    const hadHome = had ? had.dataset.home : null;
+    $("#homes").innerHTML = M.HOMES.map((map) => {
+      const v = H.canVisit(s, map), here = p.map === map;
+      const notYet = !v.ok && v.code === "not_yet", nobody = !v.ok && v.code === "nobody";
+      const note = here ? t("你在这里", "You're here") : notYet ? t("还没搬来", "Not moved in") : nobody ? t("没人在家", "Nobody home") : "";
+      const cls = [here ? "here" : "", nobody && !here ? "empty" : ""].filter(Boolean).join(" ");
+      return `<button type="button" data-home="${map}"${cls ? ` class="${cls}"` : ""}${notYet || ui.busy ? " disabled" : ""}${here ? ' aria-current="true"' : ""}>`
+        + `<span class="dot" style="background:${R.HOUSE[B.homeOf(map)] || "#6b7280"}"></span><span>${esc(L(M.MAPS[map].short))}</span>`
+        + (note ? `<span class="note">${esc(note)}</span>` : "") + `</button>`;
+    }).join("");
+    if (hadHome) { const b = $(`#homes button[data-home="${hadHome}"]`); if (b && !b.disabled) b.focus({ preventScroll: true }); }
+  }
+  // 主人按日程出门、或者走了，玩家还在这一家：留在原地（11-02 计划），在对话里提示一句可以去别家。一个时段只提示一次
+  function noteIfAlone() {
+    const s = st(), map = s.actors.player.map;
+    if (H.canVisit(s, map).code !== "nobody") return;
+    const key = `${map}:${s.time.year}-${s.time.month}-${s.time.day}:${s.time.slot}`;
+    if (ui.alone === key) return;
+    ui.alone = key;
+    note(t(`${L(M.MAPS[map].short)}的人都出去了。点上面的门牌去别家。`, `Everyone at ${homeInText(map)} has gone out. Use the door plates above to go to another home.`));
+  }
+  // 英文句子中间写 "the dorm"、"the Lims'"，门牌上才大写
+  function homeInText(map) { return L(M.MAPS[map].short).replace(/^The /, "the "); }
+  function goHome(map) {
+    if (!session) return;
+    if (ui.busy) { toast(t("等他们说完。", "Wait until they finish.")); return; }
+    if (map === st().actors.player.map) return;
+    stopWalk();
+    const r = B.visit(st(), map);
+    if (!r.ok) { if (r.reason) toast(L(r.reason)); return; }
+    note(t(`你去了${L(M.MAPS[map].short)}。`, `You go over to ${homeInText(map)}.`));
+    afterMove(r);
+    renderFeed();
   }
 
   // ---------------- 对话 ----------------
@@ -119,9 +162,10 @@
   function renderFeed() {
     const s = st(), day = D.currentDay(s), feed = $("#feed");
     const items = s.events.filter((e) => e.seq > ui.dayStartSeq && e.perceivedBy.includes("player"));
-    const when = H.timeLabel(s, items.length ? items[0].time : s.time), place = L(M.MAPS[day ? day.player.map : s.actors.player.map].name);
-    const intro = `<div class="intro"><b>${esc(day ? L(day.title) : "")}</b><span>${esc(t(`${when}，你在${place}。走到人旁边跟他说话；想做什么、想问什么，对 GM 说。`, `${when}. You start at: ${place}. Walk up to someone to talk to them; to do something or ask something, tell the GM.`))}</span></div>`;
-    const notes = ui.notes.filter((n) => n.seq > ui.dayStartSeq);
+    const when = H.timeLabel(s, ui.dayStartTime || (items.length ? items[0].time : s.time)), place = L(M.MAPS[day ? day.player.map : s.actors.player.map].name);
+    const intro = `<div class="intro"><b>${esc(day ? L(day.title) : "")}</b><span>${esc(t(`${when}，你在${place}。走到人旁边跟他说话，点上面的门牌去别家；想做什么、想问什么，对 GM 说。`, `${when}. You start at: ${place}. Walk up to someone to talk to them, or use the door plates above to go to another home; to do something or ask something, tell the GM.`))}</span></div>`;
+    // 一天里还没发生任何事时（seq 还是开局那个数）记下的提示也要显示
+    const notes = ui.notes.filter((n) => n.seq >= ui.dayStartSeq);
     const rows = [];
     let ni = 0;
     for (const e of items) {
@@ -493,6 +537,7 @@
     } finally {
       ui.busy = false; ui.thinking = new Set(); ui.streaming = null;
       if (ui.focus && st().actors[ui.focus].map !== st().actors.player.map) ui.focus = null;
+      noteIfAlone();
       renderAll();
       $("#say").focus({ preventScroll: true });
     }
@@ -597,8 +642,8 @@
 
   function showStart() {
     const body = () => `<h2>${t("楼下的另一面", "The Other Side of Downstairs")}</h2>
-      <p>${t("1989 年，新加坡，一座刚交钥匙的组屋，BLK 317A。你是楼下办公室新来的社区工作者。这一版先过第一个十年里的八个日子，每个日子从早到晚，你想去哪、跟谁说话都可以。",
-        "Singapore, 1989: BLK 317A, an HDB block whose keys have just been handed over. You are the new community worker in the office downstairs. This version covers eight days in the first decade. Each day runs from morning to night, and you can go anywhere and talk to anyone.")}</p>
+      <p>${t("1989 年，新加坡，一座刚交钥匙的组屋，BLK 317A。你是新来的社区工作者，一家一家上门。这一版先过第一个十年里的八个日子，每个日子从早到晚；地图上只有住户的家，点上面的门牌就去那一家，跟在家的人说话。",
+        "Singapore, 1989: BLK 317A, an HDB block whose keys have just been handed over. You are the new community worker, calling on one home after another. This version covers eight days in the first decade, each running from morning to night. The map shows only the residents' homes: tap a door plate above it to go to that home and talk to whoever is in.")}</p>
       ${langFields()}${providerFields()}${identityFields()}
       <div class="actions"><button class="primary" id="startBtn">${t("开始第一天", "Start day one")}</button></div>`;
     return openDialog(body(), (close) => {
@@ -667,7 +712,7 @@
     const date = en() ? `${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][wd]}, ${d.day} ${MONTHS[d.month - 1]}` : `${d.month} 月 ${d.day} 日，星期${"日一二三四五六"[wd]}`;
     await openDialog(`<div class="daycard"><div class="date">${d.year}</div>${what ? `<h2>${esc(what)}</h2>` : ""}<div class="sub">${date}</div><div class="actions" style="margin-top:18px"><button class="primary" id="goBtn">${t("开始这一天", "Start the day")}</button></div></div>`, (close) => { $("#goBtn").onclick = () => close(); });
     D.startDay(s, next.id);
-    Object.assign(ui, { focus: null, pick: "auto", dayStartSeq: s.seq, spoke: {} });
+    Object.assign(ui, { focus: null, pick: "auto", dayStartSeq: s.seq, dayStartTime: Object.assign({}, s.time), spoke: {}, notes: [], alone: "" });
     renderAll();
   }
   function decadeEnd() {
@@ -693,12 +738,14 @@
     const r = D.wait(st());
     if (!r.ok && r.endOfDay) toast(t("已经是晚上了，可以结束今天了。", "It's already night. You can end the day."));
     if (ui.focus && st().actors[ui.focus].map !== st().actors.player.map) ui.focus = null;
+    noteIfAlone();
     renderAll();
   }
 
   // ---------------- 事件绑定 ----------------
   $("#composer").addEventListener("submit", send);
   $("#map").addEventListener("click", onBoardClick);
+  $("#homes").addEventListener("click", (e) => { const b = e.target.closest("button[data-home]"); if (b) goHome(b.dataset.home); });
   $("#waitBtn").onclick = onWait;
   $("#endBtn").onclick = endDay;
   $("#settingsBtn").onclick = showSettings;
@@ -712,7 +759,8 @@
     if (!session || ui.busy || e.metaKey || e.ctrlKey || e.altKey) return;
     const k = KEYS[e.key] || KEYS[e.key.toLowerCase()];
     if (k) { e.preventDefault(); stopWalk(); tryStep(k[0], k[1]); return; }
-    if (e.key === "Enter") { e.preventDefault(); $("#say").focus(); }
+    // 键盘停在按钮、折叠标题、链接上（门牌、等一会儿、调用记录……）时，Enter 照常按下它
+    if (e.key === "Enter" && !e.target.closest("button, summary, a[href]")) { e.preventDefault(); $("#say").focus(); }
   });
   window.addEventListener("resize", () => { ui.dirty = true; });
 

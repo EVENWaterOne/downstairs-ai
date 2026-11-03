@@ -51,13 +51,16 @@
   }
   function sendHome(a) { const [x, y] = homeSpot(a.id); Object.assign(a, { map: W.RESIDENTS[a.household].home, x, y }); }
   const freshMind = () => ({ impressions: [], lean: 0, lean_seq: 0, speech_lean_decade: 0 });
+  const START_MAP = "flat_chen";
 
   function createState(opts) {
     opts = opts || {};
     const lang = opts.lang === "en" ? "en" : "zh";
     const seed = (opts.seed >>> 0) || 19890301;
     const year = W.START_YEAR;
-    const actors = { player: { id: "player", kind: "player", map: "office", x: 3, y: 2 } };
+    // 11-02 只剩各家：开局先站在陈阿姨家进门的地方，days.js 的 begin 会按第一个日子再摆一次
+    const [px, py] = M.entryOf(START_MAP);
+    const actors = { player: { id: "player", kind: "player", map: START_MAP, x: px, y: py } };
     for (const [id, c] of Object.entries(W.CHARACTERS)) {
       actors[id] = { id, kind: "resident", household: c.household, map: null, x: null, y: null, activity: "" };
       if (W.characterPresent(id, year)) sendHome(actors[id]);
@@ -68,7 +71,7 @@
     const state = {
       version: 2, lang, seed, rng: seed, turn: 0, decade: 1,
       time: { year, month: 3, day: 1, slot: 1 },
-      actors, scene: { map: "office", props: [], weather: "" },
+      actors, scene: { map: START_MAP, props: [], weather: "" },
       events: [], seq: 0, details: {},
       game: { decade: 1, points: 3, built: [], plots: {}, flags: {}, satisfaction: {} },
       minds, gm: { hypotheses: [] }, plans: { clocks: {}, threads: [] },
@@ -98,6 +101,17 @@
     return r && r.split ? `${id} 一家要按人写：${r.members.map((m) => m.id).join("、")}` : `${id} 不是住户`;
   }
   const withPlayer = (state, id) => state.actors[id] && state.actors[id].map && state.actors[id].map === state.actors.player.map;
+  // 11-02 只剩各家：玩家换一家（门牌栏、GM 的 move 带 map）都查这一条，和原来走到别人家门口一样：
+  // 这一户得已经住在这里，而且家里有人（谁在都算，来做客的也算）；宿舍一直能进，里面总有工友
+  const homeOfMap = (map) => Object.keys(W.RESIDENTS).find((id) => W.RESIDENTS[id].home === map) || null;
+  function canVisit(state, map) {
+    if (!M.MAPS[map]) return { ok: false, code: "no_map", reason: { zh: `没有 ${map} 这张地图`, en: `No map called ${map}` } };
+    const hid = homeOfMap(map);
+    if (!hid || hid === "kumar") return { ok: true };
+    if (!W.livesHere(hid, state.time.year)) return { ok: false, code: "not_yet", reason: { zh: "这户人家还没搬来。", en: "This family hasn't moved in yet." } };
+    if (!residentsOn(state, map).length) return { ok: false, code: "nobody", reason: { zh: "敲了门，没人在家。", en: "You knock. Nobody is home." } };
+    return { ok: true };
+  }
   const extrasOf = (state) => state.extras || (state.extras = []);
   const extrasOn = (state, map) => extrasOf(state).filter((g) => g.map === map);
   function occupied(state, map, x, y, except) {
@@ -112,23 +126,74 @@
   const furnitureAt = (state, map, x, y) => furnitureOn(state, map).find((f) => f.x === x && f.y === y) || null;
   // 住户和配角能站的格子：底图能站人，没有家具，也不是门（站在门上会把门堵住，玩家出不去）
   const canStand = (state, map, x, y) => M.standable(map, x, y) && !furnitureAt(state, map, x, y) && !M.isExit(map, x, y);
-  // 门口：有人站到 (x, y) 以后，旁边那扇门（同一个字母的门格都算）再没有一格空地能走进去，就是把门堵死了
-  // （小户型的门口只有一格：陈阿姨家、办公室、宿舍都是）。玩家自己站着不算，他走得开
+  // 堵门有两种，玩家自己站着都不算（他走得开）：
+  // "door"：有人站到 (x, y) 以后，旁边那扇门（同一个字母的门格都算）再没有一格空地能走进去（每一家的门口都只有一格）；
+  // "seal"：门口那一格还空着，可是它和屋里别的地方被人隔开了（陈阿姨家门里那一格左边是木屐，(4,5)、(5,6) 各站一个人，
+  //   进门的人就困在门口）。11-02 以后玩家换一家总是站在进门的地方，所以要查：站上去以后从门进来走得到的空地，
+  //   不能少于原来的一半（角落里被隔开一两格没关系）。
   const NEAR = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  const cellKey = (x, y) => x + "," + y;
+  // 从门往屋里走得到的空地（只走能站的地面，玩家不挡路）。skip 是正要挪走的人、配角，cells 是另外算作有人站的格子
+  function doorReach(state, map, skip, cells) {
+    const m = M.MAPS[map];
+    const taken = new Set(cells.map(([x, y]) => cellKey(x, y)));
+    for (const a of Object.values(state.actors)) if (a.kind !== "player" && !skip.has(a.id) && a.map === map && present(state, a.id)) taken.add(cellKey(a.x, a.y));
+    for (const g of extrasOf(state)) if (!skip.has(g.id) && g.map === map) taken.add(cellKey(g.x, g.y));
+    const seen = new Set(), queue = [];
+    m.rows.forEach((row, ty) => [...row].forEach((t, tx) => { if (m.exits[t]) queue.push([tx, ty]); }));
+    while (queue.length) {
+      const [cx, cy] = queue.shift();
+      for (const [dx, dy] of NEAR) {
+        const nx = cx + dx, ny = cy + dy, k = cellKey(nx, ny);
+        if (seen.has(k) || taken.has(k) || !canStand(state, map, nx, ny)) continue;
+        seen.add(k); queue.push([nx, ny]);
+      }
+    }
+    return seen;
+  }
+  // 一群人同时站到 cells 上（set_scene 一次摆好几个人）会不会把进门的路隔断。skip 是这些人原来的位置不算
+  function sealsDoor(state, map, cells, skip) {
+    const before = doorReach(state, map, skip, []);
+    const after = doorReach(state, map, skip, cells);
+    const stoodOn = cells.filter(([x, y]) => before.has(cellKey(x, y))).length;
+    return after.size * 2 < before.size - stoodOn;
+  }
+  // except：正要挪过来的那个人（id），或者 set_scene 一次摆的所有人（Set），他们原来站的格子不算
   function blocksDoor(state, map, x, y, except) {
     const m = M.MAPS[map];
     if (!m) return false;
-    const stander = (nx, ny) => Object.values(state.actors).some((a) => a.id !== except && a.kind !== "player" && a.map === map && a.x === nx && a.y === ny && present(state, a.id))
-      || extrasOf(state).some((g) => g.id !== except && g.map === map && g.x === nx && g.y === ny);
+    const skip = except instanceof Set ? except : new Set(except ? [except] : []);
+    const stander = (nx, ny) => Object.values(state.actors).some((a) => !skip.has(a.id) && a.kind !== "player" && a.map === map && a.x === nx && a.y === ny && present(state, a.id))
+      || extrasOf(state).some((g) => !skip.has(g.id) && g.map === map && g.x === nx && g.y === ny);
     const open = (nx, ny) => !(nx === x && ny === y) && canStand(state, map, nx, ny) && !stander(nx, ny);
     for (const [dx, dy] of NEAR) {
       const c = M.tile(map, x + dx, y + dy);
       if (!c || !m.exits[c]) continue;
       const doors = [];
       m.rows.forEach((row, ty) => [...row].forEach((t, tx) => { if (t === c) doors.push([tx, ty]); }));
-      if (!doors.some(([tx, ty]) => NEAR.some(([ex, ey]) => open(tx + ex, ty + ey)))) return true;
+      if (!doors.some(([tx, ty]) => NEAR.some(([ex, ey]) => open(tx + ex, ty + ey)))) return "door";
     }
+    if (sealsDoor(state, map, [[x, y]], skip)) return "seal";
     return false;
+  }
+  const doorFail = (kind, x, y) => fail(kind === "seal" ? `(${x},${y}) 站在这里会把进门的路堵住` : `(${x},${y}) 在门口，站在这里会把门堵住`);
+  // 进门的地方（maps.js 的 entryOf）附近最近的一格能站的空位：玩家站门里那一格就行；住户和配角还不能堵门
+  function entrySpot(state, map, who) {
+    const start = M.entryOf(map);
+    if (!start) return null;
+    const ok = (x, y) => M.standable(map, x, y) && !furnitureAt(state, map, x, y) && !M.isExit(map, x, y) && !occupied(state, map, x, y, who)
+      && (who === "player" || !blocksDoor(state, map, x, y, who));
+    const seen = new Set([start.join(",")]), queue = [start];
+    while (queue.length) {
+      const [x, y] = queue.shift();
+      if (ok(x, y)) return [x, y];
+      for (const [dx, dy] of NEAR) {
+        const nx = x + dx, ny = y + dy, k = nx + "," + ny;
+        if (seen.has(k) || !M.standable(map, nx, ny) || furnitureAt(state, map, nx, ny)) continue;
+        seen.add(k); queue.push([nx, ny]);
+      }
+    }
+    return null;
   }
   function findEvent(state, id) { return state.events.find((e) => e.id === id) || null; }
   const extrasName = (state, g) => (g.count > 1 ? `${g.label} ×${g.count}` : g.label);
@@ -137,6 +202,11 @@
     while (extrasOf(state).some((g) => g.id === "x" + n)) n++;
     return "x" + n;
   }
+  // leave 的去处是不是「回自己家」，只看开头：回家、回家做饭、先回家、带俊豪回家、回宿舍；home、heads home、to go home、back to the dorm。
+  // 不算：回家乡、先不回家、寄钱回家、walking Hafiz home、send money back home、home-made
+  const GOING_HOME_ZH = /^(?:先|就|这就|正要|要|准备|该)?(?:带[^，,。、\s]{1,8})?回(?:自己)?(?:家(?!乡)|宿舍)/;
+  const GOING_HOME_EN = /^(?:to )?(?:(?:go(?:es|ing)?|head(?:s|ing|ed)?|walk(?:s|ing)?|return(?:s|ing)?|went|off|get(?:s|ting)?) )?(?:back )?(?:home\b(?!-)|to the dorm\b)/i;
+  const GOING_HOME = { test: (to) => GOING_HOME_ZH.test(to) || GOING_HOME_EN.test(to) };
   const leaveText = (state, name, to) => state.lang === "en" ? `${name} leaves${to ? " (" + to + ")" : ""}` : `${name}离开了${to ? "（" + to + "）" : ""}`;
   function timeLabel(state, t) {
     t = t || state.time;
@@ -461,10 +531,16 @@
     [/^\((.+)\) 有家具，不能站人$/, "There is furniture at ($1); nobody can stand there"],
     [/^\((.+)\) 是门，不能站人$/, "($1) is a door; standing there would block it"],
     [/^\((.+)\) 在门口，站在这里会把门堵住$/, "($1) is right in front of a door; standing there would block it"],
+    [/^\((.+)\) 站在这里会把进门的路堵住$/, "Standing at ($1) would cut the doorway off from the rest of the room"],
+    [/^这几个人站在一起会把进门的路堵住$/, "Standing together, these people would cut the doorway off from the rest of the room"],
     [/^检定的分支要写成列表 \[…\]$/, "A roll's branches must be lists […]"],
     [/^住户只能在自己所在的地图上走动，要去别处用 leave$/, "A resident can only walk within the map they are on; use leave to go elsewhere"],
     [/^(.+) 不在地图上$/, "$1 is not on the map"],
     [/^物件只能放在玩家所在的地图上$/, "Props can only go on the player's map"],
+    [/^(\S+) 这户人家还没搬来，玩家去不了$/, "$1: this family hasn't moved in yet, so the player can't go there"],
+    [/^(\S+) 这户人家还没搬来$/, "$1: this family hasn't moved in yet, so nobody can be placed there"],
+    [/^(\S+) 家里没人，玩家去不了$/, "$1: nobody is home, so the player can't go there"],
+    [/^(\S+) 进门的地方站满了人$/, "$1: there is no free cell near the door"],
     [/^固定家具不能拿走$/, "Fixed furniture can't be taken away"],
     [/^这里没有 (.+)$/, "There is no $1 here"],
     [/^配角要写一个简短的称呼（12 个字以内）$/, "Extras need a short label (12 characters at most)"],
@@ -558,6 +634,8 @@
     set_scene(state, op) {
       const map = op.map;
       if (!M.MAPS[map]) return fail(`没有 ${map} 这张地图`);
+      // 还没搬来的那一家：谁也摆不进去（玩家也去不了）
+      if (canVisit(state, map).code === "not_yet") return fail(`${map} 这户人家还没搬来`);
       const props = op.props || [], people = op.actors || [];
       if (props.length > M.MAX_PROPS) return fail(`一个场景最多 ${M.MAX_PROPS} 个物件`);
       const taken = new Set();
@@ -571,6 +649,9 @@
       for (const p of props) if (furnitureAt(state, map, p.x, p.y)) return fail(`(${p.x},${p.y}) 已经有东西了`);
       if (state.actors.player.map === map) taken.add(state.actors.player.x + "," + state.actors.player.y);
       for (const g of extrasOn(state, map)) taken.add(g.x + "," + g.y);
+      // 已经在这张图上、这次没摆的人还站在原地：不能把别人摞在他头上（这次摆的人可以换到彼此空出来的格子）
+      const listed = new Set(people.map((a) => a.id));
+      for (const id of residentsOn(state, map)) if (!listed.has(id)) taken.add(state.actors[id].x + "," + state.actors[id].y);
       for (const a of people) {
         if (!W.CHARACTERS[a.id]) return fail(notCharacter(a.id));
         if (!present(state, a.id)) return fail(`${a.id} 这时还不住在这里`);
@@ -578,10 +659,13 @@
         // 10-29 的中文局里陈阿姨被摆在了象棋桌那一格上：人不能站在家具上
         if (furnitureAt(state, map, a.x, a.y)) return fail(`(${a.x},${a.y}) 有家具，不能站人`);
         if (M.isExit(map, a.x, a.y)) return fail(`(${a.x},${a.y}) 是门，不能站人`);
-        if (blocksDoor(state, map, a.x, a.y, a.id)) return fail(`(${a.x},${a.y}) 在门口，站在这里会把门堵住`);
+        const blocked = blocksDoor(state, map, a.x, a.y, listed);
+        if (blocked) return doorFail(blocked, a.x, a.y);
         if (taken.has(a.x + "," + a.y)) return fail(`(${a.x},${a.y}) 已经被占了`);
         taken.add(a.x + "," + a.y);
       }
+      // 一个一个看都不堵，几个人合起来也可能把进门的路隔断
+      if (people.length > 1 && sealsDoor(state, map, people.map((a) => [a.x, a.y]), new Set(people.map((a) => a.id)))) return fail("这几个人站在一起会把进门的路堵住");
       const leak = leakCheck(state, op.note);
       if (leak) return leakFail(leak);
       state.scene = { map, props: props.map((p) => ({ kind: p.kind, x: p.x, y: p.y })), weather: String(op.weather || "").slice(0, 40) };
@@ -600,13 +684,33 @@
       if (!M.MAPS[map]) return fail(`没有 ${map} 这张地图`);
       // 住户自己走：只能在所在的这张图上走几步；要去别处用 leave
       if (ctx.by === "character" && (!a.map || map !== a.map)) return fail("住户只能在自己所在的地图上走动，要去别处用 leave");
-      if (!M.standable(map, op.x, op.y)) return fail(`(${op.x},${op.y}) 不能站人`);
-      if (furnitureAt(state, map, op.x, op.y)) return fail(`(${op.x},${op.y}) 有家具，不能站人`);
-      if (who !== "player" && M.isExit(map, op.x, op.y)) return fail(`(${op.x},${op.y}) 是门，不能站人`);
-      if (who !== "player" && blocksDoor(state, map, op.x, op.y, who)) return fail(`(${op.x},${op.y}) 在门口，站在这里会把门堵住`);
-      if (occupied(state, map, op.x, op.y, who)) return fail(`(${op.x},${op.y}) 已经有人了`);
       const changed = map !== a.map;
-      Object.assign(a, { map, x: op.x, y: op.y });
+      // 还没搬来的那一家：住户也叫不进去（玩家去不了，「各家现在」里也看不到他）
+      if (who !== "player" && changed && canVisit(state, map).code === "not_yet") return fail(`${map} 这户人家还没搬来`);
+      // 玩家去别人家：还没搬来、家里没人的去不了
+      if (who === "player" && changed) {
+        const v = canVisit(state, map);
+        if (!v.ok && v.code === "not_yet") return fail(`${map} 这户人家还没搬来，玩家去不了`);
+        if (!v.ok && v.code === "nobody") return fail(`${map} 家里没人，玩家去不了`);
+      }
+      // 换到另一家又没写坐标：站在进门的地方，被占了就站最近的空位（11-02：GM 带玩家去别家、叫人进门，不用算格子）
+      let x = op.x, y = op.y;
+      if (changed && x == null && y == null) {
+        const at = entrySpot(state, map, who);
+        if (!at) return fail(`${map} 进门的地方站满了人`);
+        [x, y] = at;
+      }
+      if (!M.standable(map, x, y)) return fail(`(${x},${y}) 不能站人`);
+      if (furnitureAt(state, map, x, y)) return fail(`(${x},${y}) 有家具，不能站人`);
+      // 门不通到别处（11-02），玩家也不站门上：界面上走到门上只给提示
+      if (M.isExit(map, x, y)) return fail(`(${x},${y}) 是门，不能站人`);
+      const blocked = who !== "player" && blocksDoor(state, map, x, y, who);
+      if (blocked) return doorFail(blocked, x, y);
+      if (occupied(state, map, x, y, who)) return fail(`(${x},${y}) 已经有人了`);
+      const wasOff = !a.map;
+      Object.assign(a, { map, x, y });
+      // 从外面叫进门的人，原来记着的去处（「出门了」「在楼下」「去巴刹」）不再是他在做的事；本来就在别家的人照旧
+      if (who !== "player" && wasOff) a.activity = "";
       if (who === "player" && changed && state.scene.map !== map) state.scene = { map, props: [], weather: state.scene.weather };
       return { ok: true, changedMap: changed };
     },
@@ -639,7 +743,14 @@
       const a = state.actors[who];
       if (!present(state, who) || !a.map) return fail(`${who} 不在地图上`);
       const e = addEvent(state, { kind: "world", actor: who, map: a.map, summary: leaveText(state, nameOf(state, who), to) });
+      const home = W.RESIDENTS[a.household] && W.RESIDENTS[a.household].home;
       Object.assign(a, { map: null, x: null, y: null, activity: to });
+      // 11-02 只剩各家：在别人家说「回家」的，就回到自己家里（不然他家在门牌上是空的，玩家找不到他）
+      if (home && M.MAPS[home] && e.map !== home && GOING_HOME.test(to)) {
+        const [hx, hy] = homeSpot(who);
+        const spot = canStand(state, home, hx, hy) && !occupied(state, home, hx, hy, who) && !blocksDoor(state, home, hx, hy, who) ? [hx, hy] : entrySpot(state, home, who);
+        if (spot) Object.assign(a, { map: home, x: spot[0], y: spot[1], activity: "" });
+      }
       return { ok: true, event: e };
     },
 
@@ -690,6 +801,7 @@
       const pick = (k, dflt) => (op[k] != null ? op[k] : old ? old[k] : dflt);
       const map = pick("map", state.actors.player.map);
       if (!M.MAPS[map]) return fail(`没有 ${map} 这张地图`);
+      if (canVisit(state, map).code === "not_yet") return fail(`${map} 这户人家还没搬来`);
       const label = String(pick("label", "")).trim();
       if (!label || label.length > 12) return fail("配角要写一个简短的称呼（12 个字以内）");
       const count = pick("count", 1);
@@ -700,7 +812,8 @@
       if (!M.standable(map, x, y)) return fail(`(${x},${y}) 不能站人`);
       if (furnitureAt(state, map, x, y)) return fail(`(${x},${y}) 有家具，不能站人`);
       if (M.isExit(map, x, y)) return fail(`(${x},${y}) 是门，不能站人`);
-      if (blocksDoor(state, map, x, y, old ? old.id : null)) return fail(`(${x},${y}) 在门口，站在这里会把门堵住`);
+      const blocked = blocksDoor(state, map, x, y, old ? old.id : null);
+      if (blocked) return doorFail(blocked, x, y);
       if (occupied(state, map, x, y, old ? old.id : null)) return fail(`(${x},${y}) 已经有人了`);
       const activity = String(pick("activity", "")).trim().slice(0, 80);
       const leak = leakCheck(state, label + " " + activity);
@@ -1081,5 +1194,5 @@
 
   function drainOutbox(state) { const out = state.outbox; state.outbox = []; return out; }
 
-  root.V2Harness = { SLOTS, CAPS, PERMS, MAX_EXTRAS, createState, pushGameEvent, apply, applyOp, getView, drainOutbox, addEvent, timeLabel, leakCheck, needsGloss, reasonEn, furnitureOn, furnitureAt, canStand, blocksDoor, extrasOn, extrasName, leaveClaims };
+  root.V2Harness = { SLOTS, CAPS, PERMS, MAX_EXTRAS, createState, pushGameEvent, apply, applyOp, getView, drainOutbox, addEvent, timeLabel, leakCheck, needsGloss, reasonEn, furnitureOn, furnitureAt, canStand, blocksDoor, canVisit, extrasOn, extrasName, leaveClaims };
 })(typeof window !== "undefined" ? window : globalThis);

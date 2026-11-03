@@ -36,12 +36,15 @@ function fake(byRole) {
 }
 
 // ---------------- 棋盘 ----------------
-test("固定家具都摆在空地上：不压墙、门和地块，一格只放一件", () => {
+// 11-02 只剩各家以后没有楼下的地块了：家具只要不压墙、不压门，而且是这一家能有的东西
+test("固定家具都摆在空地上：不压墙和门，一格只放一件", () => {
+  assert.deepEqual(Object.keys(M.FURNITURE).sort(), [...M.HOMES].sort());
   for (const [map, list] of Object.entries(M.FURNITURE)) {
     const seen = new Set();
     for (const [kind, x, y] of list) {
       assert.ok(M.PROPS[kind], `${map} 里有未知的家具 ${kind}`);
-      assert.ok(M.placeable(map, x, y) && !M.isPlot(map, x, y), `${map} 的 ${kind} 在 (${x},${y})，不是空地`);
+      assert.ok(M.propAllowed(kind, map), `${kind} 不该出现在 ${map}`);
+      assert.ok(M.placeable(map, x, y) && !M.isExit(map, x, y), `${map} 的 ${kind} 在 (${x},${y})，不是空地`);
       assert.ok(!seen.has(key(x, y)), `${map} (${x},${y}) 放了两件`);
       seen.add(key(x, y));
     }
@@ -61,7 +64,7 @@ function checkConnected(state, map) {
     for (const [dx, dy] of B.DIRS) { const k = key(x + dx, y + dy); if (all.has(k) && !seen.has(k)) { seen.add(k); queue.push([x + dx, y + dy]); } }
   }
   assert.equal(seen.size, all.size, `${map}${state.day ? "（" + state.day.id + "）" : ""} 有走不到的格子`);
-  // 一扇门可以占好几格（电梯），有一格走得到就行
+  // 一扇门有一格走得到就行（门的字母可以占好几格）
   const reach = {};
   m.rows.forEach((row, y) => {
     for (let x = 0; x < row.length; x++) {
@@ -70,7 +73,9 @@ function checkConnected(state, map) {
     }
   });
   for (const [c, ok] of Object.entries(reach)) assert.ok(ok, `${map} 的门 ${c} 旁边站不到人`);
-  for (const ex of Object.values(m.exits)) assert.ok(M.standable(ex.to, ex.at[0], ex.at[1]), `${map} → ${ex.to} 的落脚点站不了人`);
+  // 门不再通到别的图：落脚点是这一家进门的那一格，要能站人、没有家具、和别的格子连着
+  const entry = M.entryOf(map);
+  assert.ok(entry && seen.has(key(...entry)), `${map} 进门的地方 ${entry} 站不了人或走不到`);
 }
 test("每张图能走的格子连成一片，每个日子摆出来的东西也不挡路", () => {
   const s = game();
@@ -107,13 +112,17 @@ test("每个日子的每个时段：人都站在能站的格子上，没有两�
         if (!a.map) continue;
         if (a.kind === "resident" && !W.characterPresent(a.id, state.time.year)) continue;
         assert.ok(M.standable(a.map, a.x, a.y) && !B.furnitureAt(state, a.map, a.x, a.y), `${day.id} ${a.id} 站在 ${a.map} (${a.x},${a.y})`);
+        // 住户不站在门上，也不堵门口（每一家的门口只有一格）
+        if (a.kind === "resident") assert.ok(!M.isExit(a.map, a.x, a.y) && !H.blocksDoor(state, a.map, a.x, a.y, a.id), `${day.id} 时段 ${state.time.slot}：${a.id} 堵住了 ${a.map} 的门`);
         const k = a.map + key(a.x, a.y);
         assert.ok(!taken.has(k), `${day.id} 时段 ${state.time.slot}：${a.id} 和别人站在同一格`);
         taken.add(k);
       }
+      // 不在地图上的去处（出门了、在楼下、在楼里干活）都在 D.PLACES 里；其他的是自己家或去做客的那一家
       for (const id of W.charactersAt(state.time.year)) {
         const place = D.placeFor(day, id, state.time.slot);
-        assert.equal(!!state.actors[id].map, place !== "away", `${day.id} 时段 ${state.time.slot}：${id} 应该在 ${place}`);
+        const want = D.PLACES[place] ? null : place === "home" ? W.RESIDENTS[W.householdOf(id)].home : place;
+        assert.equal(state.actors[id].map, want, `${day.id} 时段 ${state.time.slot}：${id} 应该在 ${place}`);
       }
       if (!D.wait(state).ok) break;
     }
@@ -131,28 +140,72 @@ test("等一会儿：到晚上就不能再等，要换日子；最后一个日�
   assert.equal(D.nextDay(state), null);
 });
 
-test("门：还没搬来的人家进不去，家里没人也进不去", () => {
+// 11-02 门不再通到别的图：换一家用门牌（B.visit），规则在 H.canVisit，和原来走到别人家门口一样
+test("门牌：还没搬来的人家进不去，家里没人也进不去", () => {
   const s = game(), state = s.state;
-  const mei = { to: "flat_mei" }, lin = { to: "flat_lin" };
-  assert.equal(B.exitOpen(state, mei).ok, false);
+  const p = state.actors.player, here = () => [p.map, p.x, p.y];
+  const start = here();
+  // 1989 年 Mei 一家还没搬来
+  assert.equal(H.canVisit(state, "flat_mei").ok, false);
+  assert.equal(H.canVisit(state, "flat_mei").code, "not_yet");
+  const mei = B.visit(state, "flat_mei");
+  assert.equal(mei.ok, false);
+  assert.match(mei.reason.zh, /还没搬来/);
+  assert.deepEqual(here(), start);
+  // 林家有人在就进得去，都出门了就进不去
+  Object.assign(state.actors.weiming, { map: "flat_lin", x: 3, y: 3 });
+  assert.equal(H.canVisit(state, "flat_lin").ok, true);
   for (const a of Object.values(state.actors)) if (a.map === "flat_lin") Object.assign(a, { map: null, x: null, y: null });
-  assert.equal(B.exitOpen(state, lin).ok, false);
-  assert.match(B.exitOpen(state, lin).reason.zh, /没人在家/);
-  assert.equal(B.exitOpen(state, { to: "dorm" }).ok, true);
+  assert.equal(H.canVisit(state, "flat_lin").ok, false);
+  assert.equal(H.canVisit(state, "flat_lin").code, "nobody");
+  const lin = B.visit(state, "flat_lin");
+  assert.equal(lin.ok, false);
+  assert.match(lin.reason.zh, /没人在家/);
+  assert.deepEqual(here(), start);
+  // 宿舍一直能进（里面总有别的工友），Kumar 不在也一样
+  assert.ok(!Object.values(state.actors).some((a) => a.kind === "resident" && a.map === "dorm"));
+  assert.equal(H.canVisit(state, "dorm").ok, true);
+  assert.equal(B.visit(state, "dorm").ok, true);
+  assert.equal(p.map, "dorm");
 });
 
-test("走路：找路绕开墙和家具，点到人就走到他旁边，踩到门就换图", () => {
-  const s = game(), state = s.state;
-  const route = B.path(state, "office", [3, 2], [2, 5]);
+// 11-02 只剩各家：门不再换图，踩到门只提示去用门牌；换一家用 B.visit，站到那一家进门的地方
+test("走路：找路绕开墙和家具，点到人就走到他旁边；踩到门不换图，换一家用门牌", () => {
+  const s = game(), state = s.state, p = state.actors.player;
+  assert.equal(p.map, "flat_chen");
+  // 从进门的地方 (4,6) 走到床边 (5,1)：要绕开木屐、饭桌、灶台、象棋盘和陈阿姨
+  const route = B.path(state, "flat_chen", [p.x, p.y], [5, 1]);
   assert.ok(route && route.length);
-  for (const [x, y] of route) assert.equal(B.moveTo(state, x, y).ok, true);
-  assert.equal(state.actors.player.map, "void_deck");
+  for (const [x, y] of route) {
+    assert.ok(M.standable("flat_chen", x, y) && !B.furnitureAt(state, "flat_chen", x, y) && !B.personAt(state, "flat_chen", x, y, "player"), `(${x},${y}) 走不过去`);
+    assert.equal(B.moveTo(state, x, y).ok, true);
+  }
+  assert.deepEqual([p.map, p.x, p.y], ["flat_chen", 5, 1]);
+  // 点到人就走到他旁边
   const someone = B.nearby(state)[0];
-  assert.ok(someone, "上任第一天的上午楼下有人");
-  const a = state.actors[someone], p = state.actors.player;
+  assert.equal(someone, "chen", "上任第一天的上午陈阿姨在家");
+  const a = state.actors[someone];
   const r2 = B.path(state, p.map, [p.x, p.y], [a.x, a.y]);
-  for (const [x, y] of r2) B.moveTo(state, x, y);
+  for (const [x, y] of r2) assert.equal(B.moveTo(state, x, y).ok, true);
   assert.ok(B.adjacent(state).includes(someone));
+  // 走回门里面那一格，再踩门：不换图，原地不动，提示用门牌
+  const back = B.path(state, p.map, [p.x, p.y], M.entryOf("flat_chen"));
+  for (const [x, y] of back) assert.equal(B.moveTo(state, x, y).ok, true);
+  const [dx, dy] = M.doorOf("flat_chen");
+  const r3 = B.moveTo(state, dx, dy);
+  assert.equal(r3.ok, false);
+  assert.equal(r3.door, true);
+  assert.deepEqual(r3.reason, B.DOOR_HINT);
+  assert.deepEqual([p.map, p.x, p.y], ["flat_chen", ...M.entryOf("flat_chen")]);
+  // 门牌：去有人在家的 Aisyah 家，站在进门的地方，不花时间
+  const time = JSON.stringify(state.time);
+  const v = B.visit(state, "flat_aisyah");
+  assert.equal(v.ok, true);
+  assert.equal(v.changedMap, true);
+  assert.equal(v.from, "flat_chen");
+  assert.deepEqual([p.map, p.x, p.y], ["flat_aisyah", ...M.entryOf("flat_aisyah")]);
+  assert.equal(JSON.stringify(state.time), time);
+  assert.ok(B.nearby(state).length, "Aisyah 家这时有人");
 });
 
 // ---------------- 提示词隔离 ----------------
@@ -251,14 +304,15 @@ test("GM 不能换日子；推进时间不跨过今天", async () => {
 
 test("花政策点的行动：玩家不确认就不做；确认了才扣点，并报给游戏端", async () => {
   const s = game(), state = s.state;
-  Object.assign(state.actors.chen, { map: "void_deck", x: 6, y: 4 });
+  // 陈阿姨在自己家（隔壁出租楼的一房式），玩家站在她旁边
+  Object.assign(state.actors.chen, { map: "flat_chen", x: 3, y: 3 });
   nextTo(state, "chen");
-  const gmOut = { ops: [{ op: "community_action", residents: ["chen"], need: "🪑", description: "帮陈阿姨把矮凳搬到树荫下" }, { op: "advance_time", slots: 1 }], responders: ["chen"] };
+  const gmOut = { ops: [{ op: "community_action", residents: ["chen"], need: "🪑", description: "帮陈阿姨把矮凳搬到窗边" }, { op: "advance_time", slots: 1 }], responders: ["chen"] };
   const llm = fake({ gm: gmOut, character: { speak: "唔该晒。", act: "" } });
-  const no = await Turn.playerTurn(s, "我想帮陈阿姨把凳子搬到树荫下", { llm, to: "gm", confirmSpend: async () => false });
+  const no = await Turn.playerTurn(s, "我想帮陈阿姨把凳子搬到窗边", { llm, to: "gm", confirmSpend: async () => false });
   assert.equal(state.game.points, 3);
   assert.ok(no.items.some((e) => e.summary === "你想了想，这次没有去做。"));
-  const yes = await Turn.playerTurn(s, "我想帮陈阿姨把凳子搬到树荫下", { llm, to: "gm", confirmSpend: async () => true });
+  const yes = await Turn.playerTurn(s, "我想帮陈阿姨把凳子搬到窗边", { llm, to: "gm", confirmSpend: async () => true });
   assert.equal(state.game.points, 2);
   assert.equal(s.sim.points, 2);
   // 先做事，再过时间，最后住户回应
