@@ -111,6 +111,10 @@ label.field > span { letter-spacing: 0.02em; }
 .line.gm { align-self: flex-start; color: var(--muted); font-size: 13.5px; border-left: 3px solid var(--line); padding-left: 10px; }
 .line .tag { font-size: 11px; font-weight: 600; border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; margin-right: 8px; font-style: normal; }
 .chip { display: inline-block; font-size: 11.5px; border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; margin-left: 6px; color: var(--muted); font-style: normal; }
+/* 流式输出：GM 正在写的那几段，末尾一个闪的光标 */
+.stream { display: contents; }
+.line.live .caret { display: inline-block; width: 0; height: 1em; border-right: 2px solid currentColor; margin-left: 2px; vertical-align: -0.15em; animation: caret 1s steps(1) infinite; }
+@keyframes caret { 50% { opacity: 0; } }
 .divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; letter-spacing: 0.1em; }
 .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 
@@ -167,6 +171,7 @@ label.field > span { letter-spacing: 0.02em; }
 .res { font-size: 12.5px; color: var(--muted); }
 .res .ok { color: var(--good); }
 .res .no { color: var(--bad); }
+.res .skip { color: var(--muted); }
 /* 用量：整局合计、每轮、每次调用 */
 .usage { border: 1px solid var(--line); background: var(--sunk); border-radius: var(--r-s); padding: 10px 12px; display: grid; gap: 6px; font-size: 13px; }
 .usage .sum-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
@@ -230,7 +235,7 @@ pre { font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; word-b
   .composer .row { flex-wrap: wrap; }
   .composer .row input { min-width: 160px; }
 }
-@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } .line.live .caret { animation: none; } }
 
 /* 语言切换：两个并排的按钮，选中的那个用主色 */
 .seg { display: inline-flex; justify-self: start; border: 1px solid var(--line); border-radius: var(--r-s); overflow: hidden; }

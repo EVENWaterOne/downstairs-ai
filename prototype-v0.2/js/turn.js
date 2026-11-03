@@ -10,10 +10,16 @@
  * - 只有玩家走动不调用模型（那在 board.js）。
  * - 每次调用记下 token 数和占上下文多少（tokens.js），返回值里的 usage 是这一轮的合计。
  * - 11-02：调用带上 prompts.js 给的 parts（llm.js 拿去打缓存断点；重试时 user 后面多出的一段不打）和 seen（这次给了哪些事件），seen 记进调用记录。
+ * - 11-02 试玩：同一段叙述出了两遍、时间也多推了一段。GM 重给没通过的操作时，把已经生效的也照抄了一遍（重试提示词前后矛盾：
+ *   通用的那句说"重新输出完整的 JSON，其余照旧"，后面又说"只输出改好的那几条"）。现在 GM 有自己的重试说明，
+ *   重给的操作里和这一轮已经生效的重复的，代码也不再做（dedupe），调用记录里标"重复，没有再做"；
+ *   叙述里抄了已经显示的那段、后面又写了新的，只做新的那部分。
+ * - 11-02 流式输出：opts.onStream 有的话，GM 的第一次调用边写边把最外层的叙述交给界面（stream.js 读没写完的 JSON、先过设定门）；
+ *   这一次的操作做完就 onStream(null)，界面换成真正的事件。重给、补翻译、住户的调用不流式。
  * llm(call) → { text, meta }：call = { role, label, system, user, ctx }，ctx 给离线演示用。不依赖 DOM。 */
 (function (root) {
   "use strict";
-  const W = root.V2World, H = root.V2Harness, B = root.V2Board, D = root.V2Days, P = root.V2Prompts, LLM = root.V2LLM, S = root.V2Session, Tok = root.V2Tokens;
+  const W = root.V2World, H = root.V2Harness, B = root.V2Board, D = root.V2Days, P = root.V2Prompts, LLM = root.V2LLM, S = root.V2Session, Tok = root.V2Tokens, St = root.V2Stream;
   const GM_ALLOWED = new Set(["narrate", "gm_reply", "establish_fact", "roll", "set_scene", "move", "leave", "set_activity", "place_prop", "remove_prop", "extras", "advance_time", "community_action", "clock_tick", "gm_hypothesis"]);
   // 玩家只是在对住户说话的这一轮，GM 不能替玩家做事：这些要玩家对 GM 说了才行
   const ONLY_WHEN_ASKED = new Set(["community_action", "gm_reply"]);
@@ -30,7 +36,9 @@
     let parsed = LLM.parseJSON(r.text);
     if (!parsed) {
       const en = call.ctx && call.ctx.state && call.ctx.state.lang === "en";
-      const again = Object.assign({}, call, en
+      // 追问那次不流式；界面上先放出来的那段先收掉
+      if (typeof call.onDiscard === "function") call.onDiscard();
+      const again = Object.assign({}, call, { onText: null, onDiscard: null }, en
         ? { label: call.label + " (JSON again)", user: call.user + "\n\n## Your last output\n" + (r.text || "(empty)") + "\n\nThat was not valid JSON. Please output only one JSON object in the required format." }
         : { label: call.label + "（重给 JSON）", user: call.user + "\n\n## 你上一次的输出\n" + (r.text || "（空）") + "\n\n上一条不是合法的 JSON。请只输出一个符合格式的 JSON 对象。" });
       const t1 = Date.now();
@@ -107,27 +115,137 @@
       `The narration seems to say ${who} left, but they are still on the map. If they really left this map, add {"op":"leave","actor":"…","to":"where to"} and don't rewrite the narration; if they only moved within this map, move them to that cell; otherwise output {"ops":[]}.`);
   }
 
+  // 重给的这一条和这一轮已经生效的比（模型常把通过的也照抄一遍）：
+  //   { skip: 原因 }：重复了，不再做；{ op }：开头抄了已经显示的那几段、后面又写了新的，只做新的那部分；null：照常做。
+  // refused：第一次没通过的那几条（重给的多半就是在改它们）。
+  // 叙述和出戏回答按字比（这一轮已经有的都算，检定分支里写的也算）：
+  //   - 去掉已经显示的那几段（在哪儿都算）以后没剩什么新的：不做；
+  //   - 已经显示的那几段在开头（差个标点也算）：去掉开头，只做后面新的；
+  //   - 夹在中间：整段照做（会重复一句，但不把一段话从中间剪开，也不丢新写的）。
+  // 推进时间、花政策点的行动一轮一次；检定：原因一样（去掉标点）的不再掷第二次，不然失败了能白捡一次；
+  //   原因差不多、骰子难度也一样的也算重复，除非它更像是第一次没通过的那条检定改好了（"听林家门口" 和 "听陈家门口" 只差一个字）；
+  // 别的操作一模一样才算
+  function dedupe(state, op, passed, startSeq, refused) {
+    if (!op || typeof op !== "object" || typeof op.op !== "string") return null;
+    const skip = { skip: T(state, "和这一轮已经生效的重复了，没有再做", "Repeats one that already took effect this round; not done again") };
+    if (op.op === "narrate" || op.op === "gm_reply") {
+      if (typeof op.text !== "string" || !op.text.trim()) return null;
+      const said = state.events.filter((e) => e.seq > startSeq && (e.kind === "narration" || e.kind === "gm_reply")).map((e) => e.summary)
+        .filter((x) => norm(x).length >= 2);
+      if (said.some((x) => repeats(x, op.text))) return skip;
+      const shownN = said.map((x) => norm(x).join("")).filter((x) => Array.from(x).length >= 6);
+      let left = norm(op.text).join("");
+      for (const x of shownN) left = left.split(x).join("");
+      if (Array.from(left).length < 2 || said.some((x) => repeats(x, left))) return skip;
+      const rest = afterShown(op.text, said);
+      return rest == null ? null : { op: Object.assign({}, op, { text: rest }) };
+    }
+    if (op.op === "advance_time" || op.op === "community_action") return passed.some((p) => p.op === op.op) ? skip : null;
+    if (op.op === "roll") {
+      const rolls = passed.filter((p) => p && p.op === "roll");
+      const same = (a, b) => norm(a).join("") === norm(b).join("");
+      if (rolls.some((p) => same(p.reason, op.reason))) return skip;
+      if ((refused || []).some((p) => p && p.op === "roll" && (same(p.reason, op.reason) || similar(p.reason, op.reason)))) return null;
+      return rolls.some((p) => similar(p.reason, op.reason) && p.dc === op.dc) ? skip : null;
+    }
+    const key = canon(op);
+    return passed.some((p) => canon(p) === key) ? skip : null;
+  }
+  // 去掉空白和标点，按字（不是按 UTF-16）
+  const NOISE = /[\s\p{P}\p{S}]/u;
+  function norm(x) { return Array.from(String(x || "").toLowerCase()).filter((c) => !NOISE.test(c)); }
+  // 已经显示的那几段在 text 的开头（按去掉标点后的字比，一段接一段地去）：返回后面新写的那部分（原文），开头不是就返回 null。
+  // 每段去掉以后，它原文末尾的标点（比如 '。"'）在 text 里也照样有的话一起去掉；再去掉开头的空白和逗号句号
+  function afterShown(text, said) {
+    const chars = Array.from(String(text));
+    const kept = [];   // [去掉标点后的字, 它在 chars 里的下标]
+    chars.forEach((c, i) => { if (!NOISE.test(c)) kept.push([c.toLowerCase(), i]); });
+    let k = 0, cutAt = 0, cut = false;
+    for (let again = true; again;) {
+      again = false;
+      for (const x of said) {
+        const n = norm(x);
+        if (n.length < 6 || k + n.length > kept.length) continue;
+        if (!n.every((c, j) => kept[k + j][0] === c)) continue;
+        k += n.length;
+        cutAt = kept[k - 1][1] + 1;
+        const tail = Array.from(String(x).trimEnd()).reverse().findIndex((c) => !NOISE.test(c));
+        const end = tail > 0 ? Array.from(String(x).trimEnd()).slice(-tail).join("") : "";
+        if (end && chars.slice(cutAt).join("").startsWith(end)) cutAt += Array.from(end).length;
+        cut = again = true;
+        break;
+      }
+    }
+    if (!cut) return null;
+    return chars.slice(cutAt).join("").replace(/^[\s，,。.；;：:、]+/u, "").trim();
+  }
+  // 两段差不多：去掉空白和标点后一样，或者两字一组的重合度到八成
+  function similar(a, b) {
+    const x = norm(a), y = norm(b);
+    if (!x.length || !y.length) return false;
+    if (x.join("") === y.join("")) return true;
+    return dice(x, y) >= 0.8;
+  }
+  function dice(x, y) {
+    const grams = (c) => { const m = new Map(); for (let i = 0; i + 1 < c.length; i++) { const g = c[i] + c[i + 1]; m.set(g, (m.get(g) || 0) + 1); } return m; };
+    const gx = grams(x), gy = grams(y);
+    let both = 0;
+    for (const [g, n] of gx) both += Math.min(n, gy.get(g) || 0);
+    const total = Math.max(0, x.length - 1) + Math.max(0, y.length - 1);
+    return total > 0 ? (2 * both) / total : 0;
+  }
+  // 重给的这段（retry）对已经显示的那段（said）没有新东西：去掉标点后一样；或者整段都在 said 里（至少 10 个字）；
+  // 或者差不多、又没比 said 长出一成半（长出很多的，可能是在后面接着写了新的，照常做）
+  function repeats(said, retry) {
+    const x = norm(said), y = norm(retry);
+    if (!x.length || !y.length) return false;
+    const xs = x.join(""), ys = y.join("");
+    if (xs === ys) return true;
+    if (y.length >= 10 && xs.includes(ys)) return true;
+    return y.length <= x.length * 1.15 + 2 && dice(x, y) >= 0.8;
+  }
+  function canon(v) {
+    if (Array.isArray(v)) return "[" + v.map(canon).join(",") + "]";
+    if (v && typeof v === "object") return "{" + Object.keys(v).sort().map((k) => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}";
+    return JSON.stringify(v);
+  }
+
   async function runGM(session, input, opts, rec) {
     const state = session.state;
     const toGM = opts.to === "gm";
     const ctx = { input, toGM, to: opts.to || null, focus: opts.focus || null, identity: opts.identity };
     const prompt = P.gmPrompt(state, ctx);
     const startSeq = state.seq, before = positions(state);
-    const out = await callJSON(opts, rec, { role: "gm", label: "GM", system: prompt.system, user: prompt.user, parts: prompt.parts, seen: prompt.seen, ctx: Object.assign({ state }, ctx) });
+    // 流式：只有这第一次调用。对住户说的那一轮 gm_reply 会被拦下，不先放
+    const live = opts.onStream ? St.viewer({ lang: state.lang, gmReply: toGM, check: (text) => H.leakCheck(state, text), show: (list) => opts.onStream(list) }) : null;
+    // 先放出来的那段收掉，界面换成真正写进世界的事件（重给的那次调用还要等一会儿，这时已经通过的叙述先显示着）。
+    // 不是合法 JSON 的那次，在追问之前就收掉（onDiscard）：那段不会写进世界
+    const settled = () => { if (live) opts.onStream(null); };
+    const out = await callJSON(opts, rec, { role: "gm", label: "GM", system: prompt.system, user: prompt.user, parts: prompt.parts, seen: prompt.seen, onText: live, onDiscard: live ? settled : null, ctx: Object.assign({ state }, ctx) });
     const pending = { action: null, advance: null };
-    if (!out.parsed) return { responders: null, pending };
+    if (!out.parsed) { settled(); return { responders: null, pending }; }
     const ops = Array.isArray(out.parsed.ops) ? out.parsed.ops : [];
     const results = ops.map((op) => gmOp(state, op, rec, pending, toGM));
     out.rec.results = results;
+    settled();
+    const passed = ops.filter((op, i) => results[i].ok);
     const failed = results.map((r, i) => ({ r, op: ops[i] })).filter((x) => !x.r.ok);
     const stranded = strandedLeavers(state, startSeq, before);
     if (failed.length || stranded.length) {
       const errors = failed.map((x) => `${JSON.stringify(x.op)}${T(state, "：", ": ")}${x.r.reason}`).concat(stranded.length ? [strandedNote(state, stranded)] : []);
-      const note = P.retryNote(errors, state.lang)
-        + T(state, "\n这一次只输出改好的那几条：{\"ops\":[…]}。已经通过的不要重复；改不了的就不要了。", "\nThis time output only the fixed ops: {\"ops\":[…]}. Don't repeat the ones that passed; drop any you can't fix.");
+      // 玩家看过的叙述：最外层的 narrate、检定分支里的都算
+      const told = state.events.some((e) => e.seq > startSeq && (e.kind === "narration" || e.kind === "gm_reply"));
+      const note = P.gmRetryNote(errors, passed.map((op) => op.op), state.lang, told);
       const retry = await callJSON(opts, rec, { role: "gm", label: T(state, "GM（重给没通过的操作）", "GM (retrying failed ops)"), system: prompt.system, user: prompt.user + T(state, "\n\n## 你上一次的输出\n", "\n\n## Your last output\n") + out.text + "\n\n" + note, parts: prompt.parts, seen: prompt.seen, ctx: Object.assign({ state, retry: true, stranded }, ctx) });
       const ops2 = retry.parsed && Array.isArray(retry.parsed.ops) ? retry.parsed.ops : [];
-      retry.rec.results = ops2.map((op) => gmOp(state, op, rec, pending, toGM));
+      retry.rec.results = ops2.map((op) => {
+        const d = dedupe(state, op, passed, startSeq, failed.map((x) => x.op));
+        if (d && d.skip) return { op: op.op, ok: true, skipped: true, reason: d.skip };
+        const use = d && d.op ? d.op : op;
+        const r = gmOp(state, use, rec, pending, toGM);
+        if (r.ok) passed.push(use);
+        return d && d.op ? Object.assign({ trimmed: true }, r) : r;
+      });
       // 还对不上就放过去，但记在调用记录里，方便以后统计
       const still = strandedLeavers(state, startSeq, before);
       if (still.length) retry.rec.results.push({ op: "check", ok: false, reason: strandedNote(state, still) });
@@ -316,5 +434,5 @@
     return { items, calls: rec.calls, notes: rec.notes, sent, usage: Tok.sum(rec.calls) };
   }
 
-  root.V2Turn = { playerTurn, pickResponders, characterOps, GM_ALLOWED };
+  root.V2Turn = { playerTurn, pickResponders, characterOps, dedupe, repeats, similar, GM_ALLOWED };
 })(typeof window !== "undefined" ? window : globalThis);

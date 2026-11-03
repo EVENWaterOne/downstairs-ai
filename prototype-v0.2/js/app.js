@@ -1,6 +1,7 @@
 /* 界面（M2）：顶栏是日子和时间，左边是平面图和对话，右边是写字板（游戏端模拟 / 你知道的事 / 调用记录）。
  * 规则都在别的文件里，这里只管显示和把玩家的操作交给它们。
- * 中文和英文两套界面：界面上的字都经过 t(中文, 英文)；设定里的字用 L(对象)。换语言会从第一天重来。 */
+ * 中文和英文两套界面：界面上的字都经过 t(中文, 英文)；设定里的字用 L(对象)。换语言会从第一天重来。
+ * 11-02 流式输出：设置里打开时（默认打开），GM 写叙述的时候就一段段显示在对话最下面（ui.streaming），写完、校验过再换成真正的事件。 */
 (function () {
   "use strict";
   const W = window.V2World, M = window.V2Maps, H = window.V2Harness, S = window.V2Session, Sim = window.V2Sim;
@@ -12,7 +13,7 @@
   // ---------------- 设置和身份 ----------------
   // 身份按语言各存一份：中文默认何志强，英文默认 Ho Chee Keong
   const hasPage = !!(window.claude && typeof window.claude.use === "function");
-  const defaults = { lang: "zh", provider: hasPage ? "claude_page" : "mock", model: "", baseUrl: "", apiKey: "", remember: false,
+  const defaults = { lang: "zh", provider: hasPage ? "claude_page" : "mock", model: "", baseUrl: "", apiKey: "", remember: false, stream: true,
     identities: { zh: Object.assign({}, P.DEFAULT_IDENTITY), en: Object.assign({}, P.DEFAULT_IDENTITY_EN) } };
   let settings = JSON.parse(JSON.stringify(defaults));
   try {
@@ -23,6 +24,7 @@
     settings.identities = { zh: Object.assign({}, P.DEFAULT_IDENTITY, ids.zh || {}), en: Object.assign({}, P.DEFAULT_IDENTITY_EN, ids.en || {}) };
   } catch (e) { /* 浏览器存储不可用时用默认值 */ }
   if (settings.lang !== "en") settings.lang = "zh";
+  settings.stream = settings.stream !== false;
   const en = () => settings.lang === "en";
   const t = (zh, enText) => (en() ? enText : zh);
   const L = (o) => (o ? o[settings.lang] || o.zh || "" : "");
@@ -40,7 +42,8 @@
   // ---------------- 状态 ----------------
   let session = null;
   // pick：输入框对谁说。"auto" 身边有人就对人说、没人就对 GM；"say" 说出口；"gm" 对 GM 说
-  const ui = { focus: null, pick: "auto", thinking: new Set(), spoke: {}, busy: false, tab: "game", dayStartSeq: 0, turns: [], notes: [], walking: null, dirty: true, lastPos: "" };
+  // streaming：GM 正在写、还没校验的几段叙述（流式输出），null 是没有
+  const ui = { focus: null, pick: "auto", thinking: new Set(), spoke: {}, busy: false, tab: "game", dayStartSeq: 0, turns: [], notes: [], walking: null, dirty: true, lastPos: "", streaming: null };
   const st = () => session.state;
   const renderer = R.createRenderer($("#map"));
 
@@ -48,7 +51,7 @@
     stopWalk();
     session = S.createSession({ lang: settings.lang });
     D.begin(st());
-    Object.assign(ui, { focus: null, pick: "auto", thinking: new Set(), spoke: {}, busy: false, turns: [], notes: [], dayStartSeq: st().seq });
+    Object.assign(ui, { focus: null, pick: "auto", thinking: new Set(), spoke: {}, busy: false, turns: [], notes: [], dayStartSeq: st().seq, streaming: null });
     staticText();
     setStatus(t("方向键或 WASD 走动，点地图上的格子走过去。点一个人，就对着他说话；想做什么、想问什么，切到“对 GM”。", "Arrow keys or WASD to walk, or tap a square on the map. Tap a person to talk to them; to do something or ask something, switch to “To GM”."));
     renderAll();
@@ -85,6 +88,8 @@
     $("#points").innerHTML = t("政策点 ", "Policy points ") + Array.from({ length: Sim.POINTS_PER_DECADE }, (_, i) => `<span class="dot${i < pts ? " on" : ""}"></span>`).join("");
     $("#waitBtn").disabled = ui.busy || s.time.slot >= D.LAST_SLOT;
     $("#endBtn").disabled = ui.busy;
+    // 一轮还没跑完时不能打开设置（从第一天重来会让还在跑的那一轮写进新的一局）
+    $("#settingsBtn").disabled = ui.busy;
     $("#endBtn").classList.toggle("primary", s.time.slot >= D.LAST_SLOT);
     $("#where").textContent = L(M.MAPS[s.actors.player.map].name);
   }
@@ -124,8 +129,29 @@
       rows.push(lineFor(e));
     }
     while (ni < notes.length) rows.push(noteLine(notes[ni++]));
-    feed.innerHTML = intro + rows.join("");
+    // 正在写的那几段不给读屏念（feed 是 aria-live，每多几个字就会再念一遍）；写完换成真正的事件时再念
+    feed.innerHTML = intro + rows.join("") + `<div id="streamBox" class="stream" aria-hidden="true">${streamLines()}</div>`;
     feed.scrollTop = feed.scrollHeight;
+  }
+  // GM 正在写的叙述：和写完的长得一样，末尾多一个光标；出戏的回答照 GM 那一行的样子
+  function streamLines() {
+    return (ui.streaming || []).map((it) => {
+      const caret = it.done ? "" : `<span class="caret" aria-hidden="true"></span>`;
+      return it.kind === "gm_reply" ? `<div class="line gm live"><span class="tag">GM</span>${esc(it.text)}${caret}</div>` : `<div class="line narr live">${esc(it.text)}${caret}</div>`;
+    }).join("");
+  }
+  // 流式输出的回调：list 是正在写的几段；null 表示这一次写完了、操作也做完了，换成真正的事件
+  function showStream(list) {
+    // 写完了：GM 可能还要重给没通过的操作，状态回到"在看"
+    if (list === null) { ui.streaming = null; setStatus(t("GM 在看这一轮会发生什么……", "The GM is working out what happens…")); renderFeed(); return; }
+    ui.streaming = list;
+    if (list.length) setStatus(t("GM 在写……", "The GM is writing…"));
+    const box = $("#streamBox"), feed = $("#feed");
+    if (!box) { renderFeed(); return; }
+    // 玩家往上翻着看的时候不把他拉回底部
+    const atEnd = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 60;
+    box.innerHTML = streamLines();
+    if (atEnd) feed.scrollTop = feed.scrollHeight;
   }
   function noteLine(n) { return `<div class="line ${n.kind === "error" ? "error" : "sys"}">${esc(n.text)}</div>`; }
   function note(text, kind) { ui.notes.push({ seq: st().seq, text, kind: kind || "sys" }); }
@@ -307,7 +333,9 @@
   function callBlock(c) {
     const m = c.meta || {};
     const badges = (m.fallback ? `<span class="badge bad" title="${t("请求的是 ", "Requested ")}${esc(m.requested)}">${t("不是指定的模型", "Not the requested model")}</span>` : "") + (m.truncated ? `<span class="badge warn">${t("输出被截断", "Output cut off")}</span>` : "");
-    const res = (c.results || []).map((r) => `<span class="${r.ok ? "ok" : "no"}">${esc(r.part || r.op)}${r.ok ? " ✓" : " ✗ " + esc(r.reason)}</span>`).join(gap());
+    // skipped：GM 重给时照抄了已经生效的那条，代码没有再做
+    // trimmed：开头抄了已经显示的叙述，只写了后面新的那部分
+    const res = (c.results || []).map((r) => r.skipped ? `<span class="skip">${esc(r.part || r.op)} ↷ ${esc(r.reason)}</span>` : `<span class="${r.ok ? "ok" : "no"}">${esc(r.part || r.op)}${r.ok ? " ✓" + (r.trimmed ? t("（开头和已经显示的重复，只写了后面新的）", " (its opening repeated what was shown; only the new part was written)") : "") : " ✗ " + esc(r.reason)}</span>`).join(gap());
     return `<div class="call"><div class="head"><b>${esc(c.label)}</b><span>${esc(m.model || "")}</span><span>${m.ms != null ? m.ms + " ms" : ""}</span>${badges}</div>
         ${c.tokens ? tokenLine(c.tokens) : ""}
         ${res ? `<div class="res">${res}</div>` : ""}
@@ -444,7 +472,7 @@
     try {
       const res = await Turn.playerTurn(session, text, {
         llm: caller(), to: tg.gm ? "gm" : tg.who, focus: ui.focus && s.actors[ui.focus].map === s.actors.player.map ? ui.focus : null, identity: identity(),
-        confirmSpend: askSpend,
+        confirmSpend: askSpend, onStream: settings.stream ? showStream : null,
         onStatus: (phase, ids) => {
           if (phase === "gm") { ui.thinking = new Set(); setStatus(t("GM 在看这一轮会发生什么……", "The GM is working out what happens…")); }
           if (phase === "translate") setStatus(t("GM 在把听不懂的话翻出来……", "The GM is translating what was hard to follow…"));
@@ -463,7 +491,7 @@
         "This round didn't finish: " + why + "  What you said is kept. You can say it again, or switch to the offline demo in Settings."), "error");
       setStatus(blank());
     } finally {
-      ui.busy = false; ui.thinking = new Set();
+      ui.busy = false; ui.thinking = new Set(); ui.streaming = null;
       if (ui.focus && st().actors[ui.focus].map !== st().actors.player.map) ui.focus = null;
       renderAll();
       $("#say").focus({ preventScroll: true });
@@ -538,6 +566,7 @@
     return `<fieldset><legend>${t("谁来当 GM 和住户", "Who plays the GM and the residents")}</legend>
       <label class="field"><span>${t("模型", "Model")}</span><select id="provSel">${opts}</select></label>
       <div id="provMore"></div>
+      <label class="hint"><input type="checkbox" id="provStream" style="width:auto"${settings.stream ? " checked" : ""} /> ${t("流式输出：GM 的叙述边写边显示（写完、检查过才算数）", "Streaming: show the GM's narration as it is written (it only counts once finished and checked)")}</label>
     </fieldset>`;
   }
   function renderProvMore() {
@@ -557,6 +586,7 @@
     if ($("#provBase")) settings.baseUrl = $("#provBase").value.trim();
     if ($("#provKey")) settings.apiKey = $("#provKey").value.trim();
     if ($("#provRemember")) settings.remember = $("#provRemember").checked;
+    if ($("#provStream")) settings.stream = $("#provStream").checked;
   }
   function bindSetup() {
     $("#provSel").onchange = renderProvMore;
