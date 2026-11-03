@@ -27,9 +27,9 @@ test("权限：GM 不能替住户说话或改印象，角色输出不能确立�
 test("事实四层：普通细节不设额度，已确认的不能改，有后果的必须走检定，秘密不能由 GM 写", () => {
   const s = atChen();
   const ops = [];
-  for (let i = 0; i < 20; i++) ops.push({ op: "establish_fact", subject: "void_deck", key: "detail_" + i, value: "有人在下棋" });
+  for (let i = 0; i < 20; i++) ops.push({ op: "establish_fact", subject: "estate", key: "detail_" + i, value: "楼下有人在下棋" });
   assert.ok(API.propose(s, gm(ops)).results.every((r) => r.ok), "20 条普通细节都应该成立（V0.1 只给 4 个额度）");
-  const again = API.propose(s, gm([{ op: "establish_fact", subject: "void_deck", key: "detail_0", value: "没人" }])).results[0];
+  const again = API.propose(s, gm([{ op: "establish_fact", subject: "estate", key: "detail_0", value: "没人" }])).results[0];
   assert.equal(again.ok, false); assert.match(again.reason, /不能改/);
   assert.equal(API.propose(s, gm([{ op: "establish_fact", subject: "kumar", key: "heatstroke", value: true, layer: "stake" }])).results[0].ok, false);
   assert.equal(API.propose(s, gm([{ op: "establish_fact", subject: "chen", key: "secret_son", value: "x" }])).results[0].ok, false);
@@ -40,20 +40,23 @@ test("事实四层：普通细节不设额度，已确认的不能改，有后�
 
 test("场景：只能用固定物件和能站人的格子", () => {
   const s = atChen();
-  const bad = (scene) => API.propose(s, gm([Object.assign({ op: "set_scene", map: "void_deck" }, scene)])).results[0];
-  assert.equal(bad({ props: [{ kind: "spaceship", x: 3, y: 3 }] }).ok, false);
-  assert.equal(bad({ props: [{ kind: "sofa", x: 3, y: 3 }] }).ok, false, "沙发不能出现在 void deck");
-  assert.equal(bad({ props: [{ kind: "bench", x: 0, y: 0 }] }).ok, false, "墙上不能放东西");
-  assert.equal(bad({ props: [{ kind: "bench", x: 3, y: 3 }, { kind: "kopi_cup", x: 3, y: 3 }] }).ok, false);
-  assert.equal(bad({ actors: [{ id: "wangmei", x: 5, y: 3 }] }).ok, false, "1989 年王美还没搬来");
-  assert.match(bad({ actors: [{ id: "lin", x: 5, y: 3 }] }).reason, /按人/, "拆开的户要按人摆");
-  assert.equal(bad({ actors: [{ id: "chen", x: 3, y: 2 }] }).ok, false, "柱子上不能站人");
-  // (6,3) 是楼下固定的象棋桌：人不能站在家具上（10-29 的中文局里陈阿姨就被摆在了桌子上）
-  assert.match(bad({ actors: [{ id: "chen", x: 6, y: 3 }] }).reason, /有家具/);
-  assert.match(bad({ props: [{ kind: "bench", x: 6, y: 3 }] }).reason, /已经有东西了/, "物件也不能压在家具上");
-  const ok = bad({ props: [{ kind: "chess_table", x: 5, y: 3 }, { kind: "bench", x: 7, y: 3 }], actors: [{ id: "chen", x: 6, y: 4, activity: "下棋" }], weather: "雷阵雨前" });
+  const bad = (scene) => API.propose(s, gm([Object.assign({ op: "set_scene", map: "flat_chen" }, scene)])).results[0];
+  assert.equal(bad({ props: [{ kind: "spaceship", x: 2, y: 2 }] }).ok, false);
+  assert.equal(bad({ props: [{ kind: "sofa", x: 2, y: 2 }] }).ok, false, "皮沙发只在林家，不能出现在陈阿姨家");
+  assert.equal(bad({ props: [{ kind: "potted_plant", x: 0, y: 0 }] }).ok, false, "墙上不能放东西");
+  assert.match(bad({ props: [{ kind: "potted_plant", x: 2, y: 2 }, { kind: "kopi_cup", x: 2, y: 2 }] }).reason, /已经有东西了/, "两件东西不能放在同一格");
+  assert.match(bad({ actors: [{ id: "wangmei", x: 4, y: 2 }] }).reason, /还不住在这里/, "1989 年王美还没搬来");
+  assert.match(bad({ actors: [{ id: "lin", x: 4, y: 2 }] }).reason, /按人/, "拆开的户要按人摆");
+  assert.match(bad({ actors: [{ id: "chen", x: 0, y: 3 }] }).reason, /站的格子 \(0,3\) 不能站人/, "墙上不能站人");
+  // (5,3) 是陈阿姨家固定的旧象棋盘：人不能站在家具上（10-29 的中文局里陈阿姨就被摆在了象棋桌上）
+  assert.match(bad({ actors: [{ id: "chen", x: 5, y: 3 }] }).reason, /有家具/);
+  assert.match(bad({ props: [{ kind: "potted_plant", x: 5, y: 3 }] }).reason, /已经有东西了/, "物件也不能压在家具上");
+  // 伟明来陈阿姨家下棋：场景能把别家的人摆进这一家
+  const ok = bad({ props: [{ kind: "kopi_cup", x: 2, y: 2 }, { kind: "couplets", x: 1, y: 3 }], actors: [{ id: "chen", x: 4, y: 3, activity: "下棋" }, { id: "weiming", x: 6, y: 3, activity: "下棋" }], weather: "雷阵雨前" });
   assert.ok(ok.ok, ok.reason);
-  assert.equal(s.state.actors.chen.map, "void_deck");
+  assert.deepEqual([s.state.actors.chen.map, s.state.actors.chen.x, s.state.actors.chen.y, s.state.actors.chen.activity], ["flat_chen", 4, 3, "下棋"]);
+  assert.equal(s.state.actors.weiming.map, "flat_chen");
+  assert.deepEqual(s.state.scene.props.map((p) => p.kind), ["kopi_cup", "couplets"]);
 });
 
 test("住户的印象只能引用自己经历过的事；不同住户的印象可以互相矛盾", () => {
@@ -63,11 +66,13 @@ test("住户的印象只能引用自己经历过的事；不同住户的印象�
   const k = API.propose(s, ch([{ op: "impression", npc: "kumar", text: "这个人好", evidence: [e1] }])).results[0];
   assert.equal(k.ok, false); assert.match(k.reason, /没有经历过/);
   assert.ok(API.propose(s, ch([{ op: "impression", npc: "chen", text: "又是拿表格来的", evidence: [e1] }])).results[0].ok);
-  // 去楼下帮 Kumar 搬推车，Kumar 形成相反的印象
-  API.propose(s, gm([{ op: "set_scene", map: "void_deck", actors: [{ id: "kumar", x: 6, y: 4 }] }]));
-  API.propose(s, ui([{ op: "move", map: "void_deck", x: 5, y: 3 }]));
-  const e2 = say(s, "Kumar，我帮你推");
+  // 去宿舍帮 Kumar 搬储物柜，Kumar 形成相反的印象；陈阿姨不在，没有经历过
+  assert.ok(API.propose(s, gm([{ op: "set_scene", map: "dorm", actors: [{ id: "kumar", x: 6, y: 4 }] }])).results[0].ok);
+  const mv = API.propose(s, ui([{ op: "move", map: "dorm", x: 5, y: 4 }])).results[0];
+  assert.ok(mv.ok, mv.reason);
+  const e2 = say(s, "Kumar，我帮你搬");
   assert.ok(API.propose(s, ch([{ op: "impression", npc: "kumar", text: "会帮忙的人", evidence: [e2] }])).results[0].ok);
+  assert.match(API.propose(s, ch([{ op: "impression", npc: "chen", text: "到处帮人", evidence: [e2] }])).results[0].reason, /没有经历过/);
   assert.equal(s.state.minds.chen.impressions.length, 1);
   assert.equal(s.state.minds.kumar.impressions.length, 1);
 });
@@ -292,8 +297,8 @@ test("设定门：不能照抄设定原文；原作台词可以说；说出来�
 
 test("设定门：英文版同样检查张力两头和照抄", () => {
   const s = API.createSession({ lang: "en" });
-  API.propose(s, ui([{ op: "move", map: "void_deck", x: 5, y: 3 }]));
-  API.propose(s, gm([{ op: "set_scene", map: "void_deck", actors: [{ id: "kumar", x: 6, y: 4 }] }]));
+  assert.ok(API.propose(s, ui([{ op: "move", map: "dorm", x: 5, y: 4 }])).results[0].ok);
+  assert.ok(API.propose(s, gm([{ op: "set_scene", map: "dorm", actors: [{ id: "kumar", x: 6, y: 4 }] }])).results[0].ok);
   assert.equal(API.propose(s, ch([{ op: "speak", npc: "kumar", text: "Sir, behind the mask is my true self." }])).results[0].leak.kind, "tension");
   const bio = W.RESIDENTS.kumar.bio.en.split(" ").slice(0, 12).join(" ");
   assert.equal(API.propose(s, gm([{ op: "narrate", text: bio }])).results[0].leak.kind, "verbatim");
@@ -312,9 +317,9 @@ const atLin = () => { const s = API.createSession(); API.propose(s, ui([{ op: "m
 
 test("按人拆开：一家人各有位置和印象，不在场的家人没有经历过", () => {
   const s = API.createSession();
-  // 伟明在楼下跟你说话，慧玲在家
-  API.propose(s, gm([{ op: "set_scene", map: "void_deck", actors: [{ id: "weiming", x: 6, y: 4 }] }]));
-  API.propose(s, ui([{ op: "move", map: "void_deck", x: 5, y: 3 }]));
+  // 伟明来陈阿姨家坐，跟你说话；慧玲在家
+  assert.ok(API.propose(s, gm([{ op: "set_scene", map: "flat_chen", actors: [{ id: "weiming", x: 5, y: 4 }] }])).results[0].ok);
+  assert.ok(API.propose(s, ui([{ op: "move", map: "flat_chen", x: 4, y: 4 }])).results[0].ok);
   const e = API.propose(s, ch([{ op: "speak", npc: "weiming", text: "没事啦，我已经有安排了。" }])).results[0].event.id;
   assert.equal(s.state.actors.huiling.map, "flat_lin");
   assert.match(API.propose(s, ch([{ op: "impression", npc: "huiling", text: "他在瞒我", evidence: [e] }])).results[0].reason, /没有经历过/);

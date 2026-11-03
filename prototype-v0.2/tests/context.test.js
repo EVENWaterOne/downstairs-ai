@@ -2,16 +2,17 @@
 // 历史按「最近两个时段」取、住户只拿到自己经历过的事、GM 拿到已定细节和自己的推测。
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { H, API, D, LLM, P, Turn, Tok } = require("./load");
+const { W, M, H, API, B, D, LLM, P, Turn, Tok } = require("./load");
 
 const HAN = /\p{Script=Han}/u;
 
-// 第一天上午：陈阿姨在楼下 (6,4)，玩家站在她旁边
-function downstairs(lang) {
+// 第一天上午：陈阿姨在自己家 (3,3)，玩家站在她旁边 (4,3)，另一边是象棋盘 (5,3)（11-02 只剩各家，原来这一场在楼下）
+function atChens(lang) {
   const s = API.createSession({ lang: lang || "zh" });
   D.begin(s.state);
-  Object.assign(s.state.actors.chen, { map: "void_deck", x: 6, y: 4 });
-  Object.assign(s.state.actors.player, { map: "void_deck", x: 7, y: 4 });
+  Object.assign(s.state.actors.chen, { map: "flat_chen", x: 3, y: 3 });
+  Object.assign(s.state.actors.player, { map: "flat_chen", x: 4, y: 3 });
+  assert.equal(B.furnitureAt(s.state, "flat_chen", 5, 3).kind, "chess_board");
   return s;
 }
 // 固定输出的假模型：GM 什么都不改、让陈阿姨回话；陈阿姨只说一句好懂的话（不触发翻译）。这样相邻两轮之间只多了这一轮的事
@@ -101,7 +102,7 @@ test("窗口：同一个时段里加新事件，窗口开头不动；超过上�
 // ---------------- 相邻两轮的提示词开头 ----------------
 for (const lang of ["zh", "en"]) {
   test(`相邻两轮：GM 和住户的系统提示一字不差，缓存的部分不变，上一轮的历史是下一轮历史的开头（${lang}）`, async () => {
-    const s = downstairs(lang);
+    const s = atChens(lang);
     const { gm, chen } = await rounds(s, steady(lang), LINES[lang]);
     assert.equal(gm.length, LINES[lang].length);
     assert.equal(chen.length, LINES[lang].length);
@@ -136,7 +137,7 @@ for (const lang of ["zh", "en"]) {
 
 test("这一轮的事只在「这一轮」里出现一次，不会同时出现在历史里；记录里写明这次看到了哪些事件", async () => {
   for (const lang of ["zh", "en"]) {
-    const s = downstairs(lang);
+    const s = atChens(lang);
     const llm = steady(lang);
     await rounds(s, llm, LINES[lang].slice(0, 3));
     for (const c of llm.calls.filter((x) => x.role === "gm" || x.role === "character")) {
@@ -158,17 +159,19 @@ test("这一轮的事只在「这一轮」里出现一次，不会同时出现�
 });
 
 test("住户的提示词里只有她自己经历过的事：别人家里的话、对 GM 说的话都不在里面", async () => {
-  const s = downstairs("zh"), st = s.state;
-  // 先在楼上林家门口和林太太说话，陈阿姨不在
-  const lin = Object.keys(st.actors).find((id) => id !== "chen" && id !== "player" && st.actors[id].map && st.actors[id].map !== "void_deck");
-  assert.ok(lin, "楼上要有一个住户");
-  const away = st.actors[lin];
+  const s = atChens("zh"), st = s.state;
+  // 先去别人家（第一天上午 Aisyah 在家）和那家的人说话，陈阿姨不在
+  const other = Object.keys(st.actors).find((id) => id !== "chen" && id !== "player" && st.actors[id].map && st.actors[id].map !== "flat_chen");
+  assert.ok(other, "别家要有一个住户在家");
+  const away = st.actors[other];
+  assert.ok(B.free(st, away.map, away.x, away.y + 1), `${away.map} (${away.x},${away.y + 1}) 站不了`);
   Object.assign(st.actors.player, { map: away.map, x: away.x, y: away.y + 1 });
-  const secret = H.applyOp(st, { op: "player_say", text: "我楼下那位陈阿姨好像很孤单", to: lin }, { by: "ui" }).event;
+  const secret = H.applyOp(st, { op: "player_say", text: "隔壁楼那位陈阿姨好像很孤单", to: other }, { by: "ui" }).event;
+  assert.ok(secret.perceivedBy.includes(other));
   assert.ok(!secret.perceivedBy.includes("chen"));
   const toGM = H.applyOp(st, { op: "player_say", text: "提示一下下一步", to: "gm" }, { by: "ui" }).event;
-  // 回到楼下和陈阿姨说话
-  Object.assign(st.actors.player, { map: "void_deck", x: 7, y: 4 });
+  // 回到陈阿姨家，站在她旁边和她说话
+  Object.assign(st.actors.player, { map: "flat_chen", x: 4, y: 3 });
   const llm = steady("zh");
   await rounds(s, llm, ["早晨！", "今天热不热？"]);
   for (const c of llm.calls.filter((x) => x.role === "character")) {
@@ -188,11 +191,11 @@ test("住户的提示词里只有她自己经历过的事：别人家里的话�
 
 test("GM 记得自己定的细节：还在窗口里的看历史里的「确立」那一行，滚出窗口的列在「今天」那一块；推测放在最后不缓存的那一块", () => {
   for (const lang of ["zh", "en"]) {
-    const s = downstairs(lang), st = s.state;
+    const s = atChens(lang), st = s.state;
     const value = lang === "en" ? "a cracked wooden set" : "一副裂了的木棋";
     const before = P.gmPrompt(st, { to: "chen", input: "x" });
     const say = H.applyOp(st, { op: "player_say", text: lang === "en" ? "Morning!" : "早晨！", to: "chen" }, { by: "ui" }).event;
-    const fact = H.applyOp(st, { op: "establish_fact", subject: "void_deck", key: "chess_set", value }, { by: "gm" });
+    const fact = H.applyOp(st, { op: "establish_fact", subject: "flat_chen", key: "chess_set", value }, { by: "gm" });
     assert.equal(fact.ok, true);
     assert.equal(H.applyOp(st, { op: "gm_hypothesis", trait: "patient", text: lang === "en" ? "Takes time with the elderly" : "对老人有耐心", confidence: 0.6, evidence: [say.id] }, { by: "gm" }).ok, true);
     st.turn += 1;
@@ -202,7 +205,7 @@ test("GM 记得自己定的细节：还在窗口里的看历史里的「确立�
     assert.equal(next.parts[0].text, before.parts[0].text);
     assert.equal(next.parts[1].text, before.parts[1].text, "定了一个细节，「今天」那一块就变了");
     assert.ok(next.seen.events.includes(fact.event.id));
-    assert.ok(next.user.includes((lang === "en" ? "Settled: " : "确立：") + "void_deck.chess_set = " + value));
+    assert.ok(next.user.includes((lang === "en" ? "Settled: " : "确立：") + "flat_chen.chess_set = " + value));
     // 推测在最后一块
     const tail = next.parts[next.parts.length - 1].text;
     assert.match(tail, lang === "en" ? /## Your guesses about the player/ : /## 你对玩家的推测/);
@@ -220,7 +223,7 @@ test("GM 记得自己定的细节：还在窗口里的看历史里的「确立�
     assert.ok(!later.seen.events.includes(fact.event.id), "细节那条事件应该已经滚出窗口");
     const b = later.parts[1].text;
     assert.match(b, lang === "en" ? /## Details settled earlier/ : /## 早先定下的细节/);
-    assert.ok(b.includes("void_deck.chess_set = " + value), b);
+    assert.ok(b.includes("flat_chen.chess_set = " + value), b);
     if (lang === "en") for (const line of later.user.split("\n").filter((l) => l.startsWith("#"))) assert.ok(!HAN.test(line), line);
     // 住户看不到 GM 的推测
     const cp = P.characterPrompt(st, "chen", { to: "chen", input: "x", turnEvents: [] });
@@ -229,14 +232,16 @@ test("GM 记得自己定的细节：还在窗口里的看历史里的「确立�
 });
 
 test("住户的历史里（不只是这一轮）：别人家定的细节、她不在时定的细节、她来之前玩家说的话都没有；她在场的事有", () => {
-  const s = downstairs("zh"), st = s.state;
-  // 陈阿姨还没下楼时，玩家在楼下自言自语、GM 定了楼下的一个细节
-  Object.assign(st.actors.chen, { map: "flat_chen", x: 2, y: 2 });
+  const s = atChens("zh"), st = s.state;
+  // 陈阿姨还在自己家、还没来 Aisyah 家做客时，玩家在 Aisyah 家（第一天上午 Aisyah 和 Mak Esah 在家）自言自语、GM 定了 Aisyah 家的一个细节
+  Object.assign(st.actors.player, { map: "flat_aisyah", x: 5, y: 4 });
+  assert.ok(B.free(st, "flat_aisyah", 6, 4), "陈阿姨待会儿要站的 (6,4) 得空着");
   const early = H.applyOp(st, { op: "player_say", text: "这里好安静啊" }, { by: "ui" }).event;
-  const awayFact = H.applyOp(st, { op: "establish_fact", subject: "void_deck", key: "bench_paint", value: "刚刷的绿漆" }, { by: "gm" });
+  const awayFact = H.applyOp(st, { op: "establish_fact", subject: "flat_aisyah", key: "door_paint", value: "刚刷的绿漆" }, { by: "gm" });
   assert.equal(awayFact.ok, true);
-  // 她下楼以后：玩家跟她打招呼；GM 当着她的面定了林家屋里的一个细节（她在场也不该知道别人家里的事）
-  Object.assign(st.actors.chen, { map: "void_deck", x: 6, y: 4 });
+  assert.ok(early.perceivedBy.includes("aisyah_kassim") && awayFact.event.perceivedBy.includes("aisyah_kassim"));
+  // 她来做客以后：玩家跟她打招呼；GM 当着她的面定了林家屋里的一个细节（她在场也不该知道别人家里的事）
+  Object.assign(st.actors.chen, { map: "flat_aisyah", x: 6, y: 4 });
   const seenByHer = H.applyOp(st, { op: "player_say", text: "阿姨早", to: "chen" }, { by: "ui" }).event;
   const otherFact = H.applyOp(st, { op: "establish_fact", subject: "flat_lin", key: "tv", value: "一台新的彩色电视" }, { by: "gm" });
   assert.equal(otherFact.ok, true);
@@ -252,6 +257,55 @@ test("住户的历史里（不只是这一轮）：别人家定的细节、她�
   assert.ok(!all.includes("一台新的彩色电视"), "别人家的细节漏进了历史");
   assert.ok(!cp.seen.events.includes(otherFact.event.id));
   for (const eid of cp.seen.events) assert.ok(st.events.find((e) => e.id === eid).perceivedBy.includes("chen"), eid);
+});
+
+test("「各家现在」只给 GM：在地图后面、最后那块不缓存的里面；住户的提示词里没有这一块，也没有别人家的人这会儿在哪", async () => {
+  for (const lang of ["zh", "en"]) {
+    const T = (zh, en) => (lang === "en" ? en : zh);
+    const s = atChens(lang), st = s.state, year = st.time.year;
+    const { gm, chen } = await rounds(s, steady(lang), LINES[lang].slice(0, 2));
+    assert.equal(gm.length, 2);
+    assert.equal(chen.length, 2);
+    const HEAD = T("各家现在", "The homes right now");
+    // 第一天上午：林家三口都出门了，Kumar 在楼里干活，Mei 家还没搬来
+    for (const id of ["weiming", "huiling", "junhao", "kumar"]) assert.equal(st.actors[id].map, null, id);
+    assert.equal(st.actors.weiming.activity, D.PLACES.away[lang]);
+    assert.equal(st.actors.kumar.activity, D.PLACES.working[lang]);
+    // 不在任何一张图上的人，「各家现在」里写成「名字 去处」
+    const whereabouts = (id) => P.nameOf(st, id) + T(" ", ": ") + st.actors[id].activity;
+    const offMap = W.charactersAt(year).filter((id) => !st.actors[id].map);
+    assert.ok(offMap.length >= 4, offMap.join(","));
+    const [ex, ey] = M.entryOf("flat_chen");
+    for (const c of gm) {
+      const last = c.parts[c.parts.length - 1];
+      assert.equal(last.cache, undefined);
+      assert.ok(last.text.includes(HEAD), `${c.label}: 最后一块里没有「各家现在」`);
+      // 只在最后这一块里：缓存的块（住户、今天、历史）里都没有，每轮变的东西不会把缓存弄断
+      for (const p of c.parts.slice(0, -1)) assert.ok(!p.text.includes(HEAD), `${c.label}: 「各家现在」出现在前面的块里${p.cache ? "（缓存的）" : ""}`);
+      assert.ok(last.text.indexOf(T("## 地图", "## Map")) < last.text.indexOf(HEAD), "「各家现在」应该在地图后面");
+      const block = last.text.slice(last.text.indexOf(HEAD)).split("\n## ")[0];
+      const line = (map) => block.split("\n").find((l) => l.startsWith(`- ${map}`)) || "";
+      assert.ok(line("flat_chen").includes(P.nameOf(st, "chen")), block);
+      assert.ok(line("flat_chen").includes(T(`进门处 (${ex},${ey})`, `inside the door (${ex},${ey})`)), block);
+      assert.ok(line("flat_chen").includes(T("← 玩家在这里", "<- the player is here")), block);
+      assert.ok(!line("flat_lin").includes(T("玩家在这里", "the player is here")), block);
+      assert.ok(line("flat_lin").includes(T("没人在家", "nobody home")), block);
+      for (const id of ["weiming", "huiling", "junhao"]) assert.ok(line("flat_lin").includes(whereabouts(id)), `${id}: ${block}`);
+      assert.ok(line("dorm").includes(whereabouts("kumar")), block);
+      assert.ok(line("flat_mei").includes(T("还没搬来", "not moved in yet")), block);
+      for (const id of offMap) assert.ok(block.includes(whereabouts(id)), `${id}: ${block}`);
+      if (lang === "en") assert.ok(!HAN.test(block), block);
+    }
+    // 住户：这一轮真发出去的陈阿姨的提示词，加上今年每个住户（在家的、出门的）的提示词
+    const prompts = chen.map((c) => ({ id: "chen", text: c.system + "\n" + c.user }))
+      .concat(W.charactersAt(year).map((id) => { const cp = P.characterPrompt(st, id, { to: "chen", input: "x", turnEvents: [] }); return { id, text: cp.system + "\n" + cp.user }; }));
+    for (const { id, text } of prompts) {
+      for (const w of [HEAD, T("进门处", "inside the door"), T("还没搬来", "not moved in yet"), T("玩家在这里", "the player is here"), T("不在家的", "away:"), T("没人在家", "nobody home")]) assert.ok(!text.includes(w), `${id} 的提示词里有「${w}」`);
+      for (const o of offMap.filter((o) => W.householdOf(o) !== W.householdOf(id))) assert.ok(!text.includes(whereabouts(o)), `${id} 的提示词里有别人家的 ${o} 在哪：${whereabouts(o)}`);
+    }
+    // 陈阿姨的提示词里根本不提谁出门了、谁在楼里干活
+    for (const { text } of prompts.filter((x) => x.id === "chen")) for (const w of [D.PLACES.away[lang], D.PLACES.working[lang]].filter((w) => lang !== "en" || w !== "out")) assert.ok(!text.includes(w), `陈阿姨的提示词里有「${w}」`);
+  }
 });
 
 // ---------------- 发给 Anthropic 的样子 ----------------
@@ -280,7 +334,7 @@ test("Anthropic 请求：系统提示和提示词里标了的块带缓存标记�
 });
 
 test("一整轮发出去的 Anthropic 请求：每次都能拆成块，缓存标记不超过 4 个", async () => {
-  const s = downstairs("zh");
+  const s = atChens("zh");
   const llm = steady("zh");
   await rounds(s, llm, LINES.zh.slice(0, 2));
   for (const c of llm.calls) {

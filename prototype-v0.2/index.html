@@ -27,6 +27,7 @@
 
   <main class="layout">
     <section class="stage">
+      <nav class="homes" id="homes" aria-label="去哪一家"></nav>
       <div class="board" id="board">
         <span class="where" id="where"></span>
         <canvas id="map" aria-label="平面图：点格子走过去，点人就对着他说话"></canvas>
@@ -40,7 +41,7 @@
             <input id="say" maxlength="300" placeholder="说一句话，在场的人都听得到" />
             <button class="primary" id="sendBtn" type="submit">说</button>
           </div>
-          <div class="status" id="status">方向键或 WASD 走动，点地图上的格子走过去。点一个人，就对着他说话；想做什么、想问什么，切到“对 GM”。</div>
+          <div class="status" id="status">点地图上面的门牌去别家。方向键或 WASD 走动，点格子走过去；点一个人，就对着他说话；想做什么、想问什么，切到“对 GM”。</div>
         </form>
       </div>
     </section>

@@ -8,8 +8,9 @@ function downstairs(lang) {
   const s = API.createSession({ lang: lang || "zh" });
   D.begin(s.state);
   const st = s.state;
-  Object.assign(st.actors.chen, { map: "void_deck", x: 6, y: 4, activity: lang === "en" ? "sitting by the chess table" : "坐在棋桌边" });
-  Object.assign(st.actors.player, { map: "void_deck", x: 7, y: 4 });
+  // 陈阿姨家：(5,3) 是那副旧象棋盘（家具，人不能站上去），她坐在棋盘这一边，你站在另一边
+  Object.assign(st.actors.chen, { map: "flat_chen", x: 4, y: 3, activity: lang === "en" ? "sitting by the chessboard" : "坐在棋盘边" });
+  Object.assign(st.actors.player, { map: "flat_chen", x: 6, y: 4 });
   return s;
 }
 // byRole[role](ctx, n)：n 是这个角色第几次被调用（从 1 起）。call.onText 有的话，把输出一个字一个字地交出去
@@ -26,8 +27,8 @@ function fake(byRole, log) {
   };
 }
 const NARR = {
-  zh: "你在象棋桌对面坐下，执红先行。棋子一粒粒落下，陈阿姨出手很快，几步之后你的一只马就被她吃了。一盘下完，日头已经爬高，void deck 外面晒得发白。",
-  en: "You sit down across the chess table and take red. The pieces click down one by one; Mdm Chan moves fast, and a few moves in she has taken one of your horses. By the time the game ends the sun is high and the void deck outside is glaring white."
+  zh: "你在棋盘对面坐下，执红先行。棋子一粒粒落下，陈阿姨出手很快，几步之后你的一只马就被她吃了。一盘下完，日头已经爬高，窗外晒得发白。",
+  en: "You sit down across the chessboard and take red. The pieces click down one by one; Mdm Chan moves fast, and a few moves in she has taken one of your horses. By the time the game ends the sun is high and it is glaring white outside the window."
 };
 const narrations = (res) => res.items.filter((e) => e.kind === "narration");
 
@@ -36,15 +37,15 @@ for (const lang of ["zh", "en"]) {
   test(`GM 重给时照抄了已经生效的叙述和推进时间：只算一次，调用记录里标出来（${lang}）`, async () => {
     const s = downstairs(lang), st = s.state;
     const slot = st.time.slot;
-    // 第一次：坐到棋桌那一格（有家具）没通过；重给：按"其余照旧"把整段又写了一遍
+    // 第一次：坐到棋盘那一格（有家具）没通过；重给：按"其余照旧"把整段又写了一遍
     const llm = fake({
-      gm: (ctx, n) => ({ ops: [{ op: "move", x: n === 1 ? 6 : 7, y: 3 }, { op: "narrate", text: NARR[lang] }, { op: "advance_time", slots: 1 }], responders: ["chen"] }),
+      gm: (ctx, n) => ({ ops: [{ op: "move", x: n === 1 ? 5 : 6, y: 3 }, { op: "narrate", text: NARR[lang] }, { op: "advance_time", slots: 1 }], responders: ["chen"] }),
       character: { speak: lang === "en" ? "Your horse is gone, lah." : "哈，你隻马冇咗，仲想点？", gloss: lang === "en" ? null : "哈，你的马没了，还想怎样？" }
     });
     const res = await Turn.playerTurn(s, lang === "en" ? "Play chess with Mdm Chan for a while" : "与陈阿姨对弈一段时间", { llm, to: "gm" });
     assert.equal(narrations(res).length, 1, JSON.stringify(res.items.map((e) => e.summary)));
     assert.equal(st.time.slot, slot + 1, "时间只推一段");
-    assert.deepEqual([st.actors.player.x, st.actors.player.y], [7, 3]);
+    assert.deepEqual([st.actors.player.x, st.actors.player.y], [6, 3]);
     const retry = res.calls.find((c) => /重给|retrying/.test(c.label));
     assert.deepEqual(retry.results.map((r) => [r.op, r.ok, !!r.skipped]), [["move", true, false], ["narrate", true, true], ["advance_time", true, true]]);
     // 重试提示词不再前后矛盾：不叫它"整段重给、其余照旧"，并告诉它哪些已经生效
@@ -65,11 +66,11 @@ test("叙述说陈阿姨走了、重给时补了 leave 又把叙述抄了一遍�
 test("重给时把检定也抄了一遍：不再掷第二次", async () => {
   const s = downstairs(), st = s.state;
   const roll = { op: "roll", dc: 5, reason: "说服陈阿姨让你执红", on_success: [{ op: "narrate", text: "陈阿姨把红子推到你这边。" }], on_failure: [{ op: "narrate", text: "陈阿姨把红子留在自己这边。" }] };
-  const llm = fake({ gm: (ctx, n) => (n === 1 ? { ops: [roll, { op: "move", x: 6, y: 3 }], responders: [] } : { ops: [roll, { op: "move", x: 7, y: 3 }] }) });
+  const llm = fake({ gm: (ctx, n) => (n === 1 ? { ops: [roll, { op: "move", x: 5, y: 3 }], responders: [] } : { ops: [roll, { op: "move", x: 6, y: 3 }] }) });
   const res = await Turn.playerTurn(s, "我想执红", { llm, to: "gm" });
   assert.equal(res.items.filter((e) => e.kind === "roll").length, 1);
   assert.equal(narrations(res).length, 1);
-  assert.deepEqual([st.actors.player.x, st.actors.player.y], [7, 3]);
+  assert.deepEqual([st.actors.player.x, st.actors.player.y], [6, 3]);
 });
 
 test("第一次的叙述没过设定门，重给的新叙述照常写进去", async () => {
@@ -114,7 +115,7 @@ test("重给时把已经显示的几段合成一段：不再写；差个标点�
   const A = "陈阿姨点了点头，没有说话。", B = "风从走廊那头吹过来，棋盘上的纸被掀起一角。";
   const run = async (retryText, lang) => {
     const s = downstairs(lang);
-    const llm = fake({ gm: (ctx, n) => (n === 1 ? { ops: [{ op: "narrate", text: A }, { op: "narrate", text: B }, { op: "move", x: 6, y: 3 }], responders: [] } : { ops: [{ op: "narrate", text: retryText }, { op: "move", x: 7, y: 3 }] }) });
+    const llm = fake({ gm: (ctx, n) => (n === 1 ? { ops: [{ op: "narrate", text: A }, { op: "narrate", text: B }, { op: "move", x: 5, y: 3 }], responders: [] } : { ops: [{ op: "narrate", text: retryText }, { op: "move", x: 6, y: 3 }] }) });
     const res = await Turn.playerTurn(s, "陪陈阿姨坐一会儿", { llm, to: "gm" });
     return { got: narrations(res).map((e) => e.summary), retry: res.calls.find((c) => /重给|retrying/.test(c.label)).results[0] };
   };
@@ -132,7 +133,7 @@ test("重给时把已经显示的几段合成一段：不再写；差个标点�
   // 引号收尾：开头的那段连同它的引号一起去掉
   const Q = "陈阿姨说：“落子无悔。”";
   const s2 = downstairs();
-  const llm2 = fake({ gm: (ctx, n) => (n === 1 ? { ops: [{ op: "narrate", text: Q }, { op: "move", x: 6, y: 3 }], responders: [] } : { ops: [{ op: "narrate", text: Q + "她把棋盘转了个方向。" }, { op: "move", x: 7, y: 3 }] }) });
+  const llm2 = fake({ gm: (ctx, n) => (n === 1 ? { ops: [{ op: "narrate", text: Q }, { op: "move", x: 5, y: 3 }], responders: [] } : { ops: [{ op: "narrate", text: Q + "她把棋盘转了个方向。" }, { op: "move", x: 6, y: 3 }] }) });
   const res2 = await Turn.playerTurn(s2, "下一盘", { llm: llm2, to: "gm" });
   assert.deepEqual(narrations(res2).map((e) => e.summary), [Q, "她把棋盘转了个方向。"]);
   // 已经显示的那段夹在新写的中间：整段照写（重复一句），不把它从中间剪开
@@ -145,7 +146,7 @@ test("英文：句号换成分号接着写，只写新的；夹在中间的整�
   const shown = "Mdm Chan nods and says nothing.";
   const run = async (retryText) => {
     const s = downstairs("en");
-    const llm = fake({ gm: (ctx, n) => (n === 1 ? { ops: [{ op: "narrate", text: shown }, { op: "move", x: 6, y: 3 }], responders: [] } : { ops: [{ op: "narrate", text: retryText }, { op: "move", x: 7, y: 3 }] }) });
+    const llm = fake({ gm: (ctx, n) => (n === 1 ? { ops: [{ op: "narrate", text: shown }, { op: "move", x: 5, y: 3 }], responders: [] } : { ops: [{ op: "narrate", text: retryText }, { op: "move", x: 6, y: 3 }] }) });
     const res = await Turn.playerTurn(s, "Sit with Mdm Chan for a while", { llm, to: "gm" });
     return narrations(res).map((e) => e.summary);
   };
@@ -165,7 +166,7 @@ test("重给时改好了第一次没通过的那条检定（原因只差一个�
   // 原因差不多、难度也一样、又不是在改没通过的那条：算重复
   const s2 = downstairs("en");
   const red = (reason) => ({ op: "roll", dc: 8, reason, on_success: [{ op: "narrate", text: "Mdm Chan slides the red pieces to you." }], on_failure: [{ op: "narrate", text: "Mdm Chan keeps red." }] });
-  const llm2 = fake({ gm: (ctx, n) => (n === 1 ? { ops: [red("Persuade Mdm Chan to let you take red"), { op: "move", x: 6, y: 3 }], responders: [] } : { ops: [red("Persuade Mdm Chan to let you play red"), { op: "move", x: 7, y: 3 }] }) });
+  const llm2 = fake({ gm: (ctx, n) => (n === 1 ? { ops: [red("Persuade Mdm Chan to let you take red"), { op: "move", x: 5, y: 3 }], responders: [] } : { ops: [red("Persuade Mdm Chan to let you play red"), { op: "move", x: 6, y: 3 }] }) });
   const res2 = await Turn.playerTurn(s2, "Can I play red?", { llm: llm2, to: "gm" });
   assert.equal(res2.items.filter((e) => e.kind === "roll").length, 1);
 });
@@ -173,14 +174,14 @@ test("重给时改好了第一次没通过的那条检定（原因只差一个�
 test("重给时检定的原因多了个句号：还是不再掷（审查时找到）", async () => {
   const s = downstairs(), st = s.state;
   const roll = (reason) => ({ op: "roll", dc: 5, reason, on_success: [{ op: "narrate", text: "陈阿姨把红子推到你这边。" }], on_failure: [{ op: "narrate", text: "陈阿姨把红子留在自己这边。" }] });
-  const llm = fake({ gm: (ctx, n) => (n === 1 ? { ops: [roll("说服陈阿姨让你执红"), { op: "move", x: 6, y: 3 }], responders: [] } : { ops: [roll("说服陈阿姨让你执红。"), { op: "move", x: 7, y: 3 }] }) });
+  const llm = fake({ gm: (ctx, n) => (n === 1 ? { ops: [roll("说服陈阿姨让你执红"), { op: "move", x: 5, y: 3 }], responders: [] } : { ops: [roll("说服陈阿姨让你执红。"), { op: "move", x: 6, y: 3 }] }) });
   const res = await Turn.playerTurn(s, "我想执红", { llm, to: "gm" });
   assert.equal(res.items.filter((e) => e.kind === "roll").length, 1);
   assert.equal(narrations(res).length, 1);
   // 叙述是检定分支里写的：重试说明也要说玩家已经看到了
   const retry = res.calls.find((c) => /重给/.test(c.label));
   assert.match(retry.user, /那段叙述玩家已经看到了/);
-  assert.deepEqual([st.actors.player.x, st.actors.player.y], [7, 3]);
+  assert.deepEqual([st.actors.player.x, st.actors.player.y], [6, 3]);
 });
 
 test("GM 的重试说明：只要改好的那几条，叙述已经给玩家看了（中英一致）", () => {
@@ -262,7 +263,7 @@ test("流式：GM 写的时候一段段交给界面，操作做完就收掉；�
   const s = downstairs();
   const log = [], shown = [];
   const llm = fake({
-    gm: (ctx, n) => ({ ops: [{ op: "move", x: n === 1 ? 6 : 7, y: 3 }, { op: "narrate", text: NARR.zh }, { op: "advance_time", slots: 1 }], responders: [] })
+    gm: (ctx, n) => ({ ops: [{ op: "move", x: n === 1 ? 5 : 6, y: 3 }, { op: "narrate", text: NARR.zh }, { op: "advance_time", slots: 1 }], responders: [] })
   }, log);
   const res = await Turn.playerTurn(s, "与陈阿姨对弈一段时间", { llm, to: "gm", onStream: (l) => { shown.push(l); log.push({ stream: l === null ? "end" : l.length }); } });
   assert.deepEqual(log.filter((x) => x.call).map((x) => x.streamed), [true, false]);

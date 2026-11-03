@@ -2,7 +2,7 @@
    颜色取自八十年代组屋：水泥灰、楼梯栏杆的青绿、门牌号的白底黑字；棋盘本身固定用浅色，深色模式只换外框。 */
 :root {
   --bg: #e9ece8; --surface: #f7f8f5; --sunk: #dfe4df; --ink: #1f2628; --muted: #5f6b6c; --line: #cdd4cf;
-  --accent: #2c7a68; --accent-ink: #ffffff; --accent-soft: #d5ebe4; --plate: #fdfdfb; --plate-ink: #15302b;
+  --accent: #2c7a68; --accent-ink: #ffffff; --accent-soft: #d5ebe4; --plate: #fdfdfb; --plate-ink: #15302b; --plate-muted: #5f6b6c;
   --good: #2f8a55; --warn: #b7791f; --bad: #b8443a; --you: #24313a; --you-ink: #ffffff;
   --shadow: 0 1px 2px rgba(20, 40, 35, 0.08), 0 6px 20px rgba(20, 40, 35, 0.07);
   --ui: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
@@ -13,7 +13,7 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #151a1b; --surface: #1d2324; --sunk: #121718; --ink: #e4e9e6; --muted: #98a4a2; --line: #313a3a;
-    --accent: #5db8a2; --accent-ink: #0d1f1b; --accent-soft: #1f3a34; --plate: #e9eee9; --plate-ink: #15302b;
+    --accent: #5db8a2; --accent-ink: #0d1f1b; --accent-soft: #1f3a34; --plate: #e9eee9; --plate-ink: #15302b; --plate-muted: #4f5a5b;
     --good: #67c48c; --warn: #e0a64a; --bad: #e57a6e; --you: #3a4a55; --you-ink: #ffffff;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.25);
     color-scheme: dark;
@@ -21,7 +21,7 @@
 }
 :root[data-theme="dark"] {
   --bg: #151a1b; --surface: #1d2324; --sunk: #121718; --ink: #e4e9e6; --muted: #98a4a2; --line: #313a3a;
-  --accent: #5db8a2; --accent-ink: #0d1f1b; --accent-soft: #1f3a34; --plate: #e9eee9; --plate-ink: #15302b;
+  --accent: #5db8a2; --accent-ink: #0d1f1b; --accent-soft: #1f3a34; --plate: #e9eee9; --plate-ink: #15302b; --plate-muted: #4f5a5b;
   --good: #67c48c; --warn: #e0a64a; --bad: #e57a6e; --you: #3a4a55; --you-ink: #ffffff;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.25);
   color-scheme: dark;
@@ -78,6 +78,19 @@ label.field > span { letter-spacing: 0.02em; }
 /* ---------- 主体 ---------- */
 .layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; padding-bottom: 16px; }
 .stage { display: flex; flex-direction: column; gap: 12px; min-height: 0; min-width: 0; }
+/* 门牌栏：点一家就上门（11-02 只剩各家）。门牌和顶栏的 BLK 门牌一样，深浅色都是浅底深字 */
+.homes { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: -4px; }
+.homes button {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 13.5px; border-radius: 4px;
+  background: var(--plate); color: var(--plate-ink); border: 1px solid var(--line);
+}
+.homes button .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+/* .note 在写字板里是带底色的小框；门牌上只是一行小字 */
+.homes button .note { font-size: 12px; color: var(--plate-muted); background: none; padding: 0; border-radius: 0; }
+.homes button.here { border: 2px solid var(--plate-ink); padding: 3px 9px; font-weight: 600; cursor: default; }
+/* 没人在家：不用整块变透明（字会看不清），换成淡一点的字和虚线边 */
+.homes button.empty { background: var(--surface); color: var(--muted); border-style: dashed; }
+.homes button.empty .note { color: var(--muted); }
 .board {
   position: relative; background: var(--sunk); border: 1px solid var(--line); border-radius: var(--r);
   display: flex; align-items: center; justify-content: center; padding: 10px; min-height: 220px; overflow: auto;

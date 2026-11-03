@@ -1,6 +1,7 @@
 /* 棋盘：走动、碰撞、门（M2）。
  * 地图在这里只是跑团的棋盘和辅助叙事（10-28 Polaris：RPG 部分从简，该抄就抄），规则照 RPG Maker 的老规矩：
- * 一步一格、四个方向；墙、家具和人挡路；踩到门就换到另一张图。寻路是最普通的广度优先搜索。
+ * 一步一格、四个方向；墙、家具和人挡路。寻路是最普通的广度优先搜索。
+ * 11-02 只剩各家（maps.js）：门不再通到别的图，踩到门只提示去用门牌；换一家用 visit，站到那一家进门的地方，不花时间。
  * 家具 = maps.js 的 FURNITURE + 这一天临时摆出来的东西（state.day_props，由 days.js 写）。GM 的场景物件不挡路；无名配角（state.extras）挡路。
  * 不依赖 DOM。 */
 (function (root) {
@@ -31,17 +32,8 @@
     return Object.assign({ char: t }, m.exits[t]);
   }
 
-  // 去别人家：这一户得住在这里，而且家里有人（棋盘上没有人的家，不让人随便进）
   function homeOf(mapId) { return Object.keys(W.RESIDENTS).find((id) => W.RESIDENTS[id].home === mapId) || null; }
-  function exitOpen(state, ex) {
-    const hid = homeOf(ex.to);
-    if (!hid || hid === "kumar") return { ok: true };
-    const year = state.time.year;
-    if (!W.livesHere(hid, year)) return { ok: false, reason: { zh: "这户人家你不认识，门关着。", en: "You don't know this family; the door is shut." } };
-    const home = Object.values(state.actors).some((a) => a.kind === "resident" && a.map === ex.to && W.characterPresent(a.id, year));
-    if (!home) return { ok: false, reason: { zh: "敲了门，没人在家。", en: "You knock. Nobody is home." } };
-    return { ok: true };
-  }
+  const DOOR_HINT = { zh: "要去别家，点地图上面的门牌。", en: "To go to another home, use the door plates above the map." };
 
   // 从 (x, y) 往外找最近的空位（包括它自己）
   function nearestFree(state, mapId, x, y, opts) {
@@ -106,16 +98,23 @@
       const who = personAt(state, p.map, x, y, "player");
       return { ok: false, bump: who ? who.id : null };
     }
-    const ex = exitAt(p.map, x, y);
-    if (ex) {
-      const open = exitOpen(state, ex);
-      if (!open.ok) return { ok: false, reason: open.reason };
-      const spot = nearestFree(state, ex.to, ex.at[0], ex.at[1], { except: "player", noExit: true });
-      if (!spot) return { ok: false };
-      const r = H.applyOp(state, { op: "move", actor: "player", map: ex.to, x: spot[0], y: spot[1] }, { by: "ui" });
-      return Object.assign({ changedMap: true, from: p.map }, r);
-    }
+    // 踩到门：不换图，提示用门牌
+    if (exitAt(p.map, x, y)) return { ok: false, door: true, reason: DOOR_HINT };
     return H.applyOp(state, { op: "move", actor: "player", x, y }, { by: "ui" });
+  }
+
+  // 去另一家（门牌栏）：还没搬来、家里没人的去不了（规则在 harness.js 的 canVisit，GM 带玩家过去也查同一条）。
+  // 站到进门的那一格，被占了就站最近的空位
+  function visit(state, mapId) {
+    const p = state.actors.player, from = p.map;
+    if (mapId === from) return { ok: false, same: true };
+    const v = H.canVisit(state, mapId);
+    if (!v.ok) return { ok: false, reason: v.reason };
+    const [ex, ey] = M.entryOf(mapId);
+    const spot = nearestFree(state, mapId, ex, ey, { except: "player", noExit: true });
+    if (!spot) return { ok: false, reason: { zh: "屋里站满了人，进不去。", en: "The flat is packed; you can't get in." } };
+    const r = H.applyOp(state, { op: "move", actor: "player", map: mapId, x: spot[0], y: spot[1] }, { by: "ui" });
+    return Object.assign({ changedMap: !!r.ok, from }, r);
   }
 
   // 玩家身边（上下左右）的人
@@ -132,5 +131,5 @@
       .map((a) => a.id);
   }
 
-  root.V2Board = { DIRS, furniture, furnitureAt, personAt, extrasAt, free, exitAt, exitOpen, homeOf, nearestFree, path, step, moveTo, adjacent, nearby };
+  root.V2Board = { DIRS, furniture, furnitureAt, personAt, extrasAt, free, exitAt, homeOf, nearestFree, path, step, moveTo, visit, adjacent, nearby, DOOR_HINT };
 })(typeof window !== "undefined" ? window : globalThis);

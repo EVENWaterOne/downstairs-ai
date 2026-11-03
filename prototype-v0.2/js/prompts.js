@@ -150,11 +150,11 @@
   const things = (state, xs) => list(state, xs.map((f) => `${L(state, M.PROPS[f.kind].name)}(${f.x},${f.y})`));
   function layoutLines(state, mapId, furniture, props) {
     const m = M.MAPS[mapId];
-    const lines = [T(state, "底图（# 墙　. 地面　= 栏杆　o 柱子　~ 草地　字母是门，数字是游戏端的地块）。x 是列、y 是行，从 0 数：",
-      "Layout (# wall  . floor  = railing  o pillar  ~ grass; letters are doors, digits are the game's plots). x is the column, y the row, counting from 0:")];
+    const lines = [T(state, "底图（# 墙　. 地面　字母是门）。x 是列、y 是行，从 0 数：",
+      "Layout (# wall  . floor; a letter is the door). x is the column, y the row, counting from 0:")];
     lines.push(m.rows.join("\n"));
-    const exits = list(state, Object.entries(m.exits).map(([c, ex]) => `${c}→${mapName(state, ex.to)}`));
-    lines.push(T(state, `门：${exits}`, `Doors: ${exits}`));
+    const doors = list(state, Object.keys(m.exits));
+    lines.push(T(state, `门：${doors}（进出这一家的门）`, `Door: ${doors} (the way in and out of this home)`));
     if (furniture.length) lines.push(T(state, `家具（挡路，不能站人）：${things(state, furniture)}`, `Furniture (blocks the way; nobody can stand there): ${things(state, furniture)}`));
     if (props.length) lines.push(T(state, `摆出来的东西：${things(state, props)}`, `Set out here: ${things(state, props)}`));
     return lines;
@@ -166,10 +166,6 @@
     lines.push(...layoutLines(state, p.map, B.furniture(state, p.map), state.scene.map === p.map ? state.scene.props : []));
     const kinds = Object.keys(M.PROPS).filter((k) => M.propAllowed(k, p.map)).map((k) => `${k}(${L(state, M.PROPS[k].name)})`);
     lines.push(T(state, `这张图上能摆的物件 kind：${list(state, kinds)}`, `Object kinds allowed on this map: ${list(state, kinds)}`));
-    if (p.map === "void_deck") {
-      const plots = Object.entries(state.game.plots || {}).map(([i, c]) => T(state, `地块 ${i}：`, `plot ${i}: `) + L(state, W.FACILITIES[c].name));
-      if (plots.length) lines.push(T(state, `楼下建了：${list(state, plots)}`, `Built downstairs: ${list(state, plots)}`));
-    }
     lines.push(T(state, `玩家在 (${p.x},${p.y})。`, `The player is at (${p.x},${p.y}).`));
     const near = new Set(B.adjacent(state));
     const people = B.nearby(state);
@@ -180,6 +176,35 @@
       lines.push(T(state, `- ${id}（${nameOf(state, id)}）在 (${a.x},${a.y})`, `- ${id} (${nameOf(state, id)}) at (${a.x},${a.y})`) + (notes.length ? T(state, "，", ", ") + list(state, notes) : ""));
     }
     for (const g of H.extrasOn(state, p.map)) lines.push(extrasLine(state, g));
+    return lines.join("\n");
+  }
+
+  // 11-02 只剩各家：GM 要知道哪一家现在有人、不在家的人在哪，才接得住「我去林家看看」，也才知道能把谁叫进门。
+  // 只给 GM（住户只知道自己家和眼前，10-29 的规矩）。放在每轮都变的最后一块里
+  function homesBlock(state) {
+    const year = state.time.year, p = state.actors.player;
+    const lines = [T(state, "各家现在（玩家点门牌就能去有人在家的那一家，不花时间；没人在家、还没搬来的去不了，宿舍一直能去）：",
+      "The homes right now (the player can tap a door plate to go to any home with someone in, at no cost in time; not to an empty home or one whose family hasn't moved in; the dorm is always open):")];
+    for (const map of M.HOMES) {
+      const hid = Object.keys(W.RESIDENTS).find((h) => W.RESIDENTS[h].home === map);
+      const short = L(state, M.MAPS[map].short);
+      const head = T(state, `- ${map}（${short}）`, `- ${map} (${short})`);
+      const mark = p.map === map ? T(state, "　← 玩家在这里", "  <- the player is here") : "";
+      if (!W.livesHere(hid, year)) { lines.push(head + T(state, "：还没搬来", ": not moved in yet") + mark); continue; }
+      const here = Object.values(state.actors).filter((a) => a.kind === "resident" && a.map === map && W.characterPresent(a.id, year))
+        .map((a) => nameOf(state, a.id) + (a.household !== hid ? T(state, "（来做客）", " (visiting)") : ""));
+      const away = W.charactersAt(year).filter((id) => W.householdOf(id) === hid && state.actors[id].map !== map).map((id) => {
+        const a = state.actors[id];
+        const where = a.map ? T(state, `在${mapName(state, a.map)}`, `at ${mapName(state, a.map)}`) : a.activity || T(state, "不在", "out");
+        return `${nameOf(state, id)}${T(state, " ", ": ")}${where}`;
+      });
+      const entry = M.entryOf(map);
+      // 宿舍里总有别的工友（不是角色），所以不写"没人在家"
+      const empty = hid === "kumar" ? T(state, "只有别的工友在", "only the other workers in") : T(state, "没人在家", "nobody home");
+      const bits = [here.length ? T(state, `${listDun(state, here)} 在这里`, `${listDun(state, here)} here`) : empty]
+        .concat(away.length ? [T(state, "不在家的：", "away: ") + list(state, away)] : []);
+      lines.push(head + T(state, "：", ": ") + bits.join(T(state, "；", "; ")) + T(state, `；进门处 (${entry[0]},${entry[1]})`, `; inside the door (${entry[0]},${entry[1]})`) + mark);
+    }
     return lines.join("\n");
   }
 
@@ -308,15 +333,15 @@
 
   const GM_OPS = `- {"op":"narrate","text":"…","noticed_by":["chen"]}　旁白：玩家看得到、听得到的环境、动作和结果，写给玩家看，称玩家为「你」。noticed_by 可以不写，不写就是这张图上的人都看到了；隔着房间的小动作只写注意到的住户 id，写 [] 就是只有玩家知道。
 - {"op":"gm_reply","text":"…"}　出戏回答玩家（玩家对你提问、要提示、说不清想做什么时用），一到两句。只有玩家看得到，不进住户的经历。
-- {"op":"establish_fact","subject":"…","key":"…","value":"…"}　定一个之前没定、之后一直成立的普通细节（今天楼下有没有人下棋、谁家门口放着什么）。subject 是地图、角色、户、配角或物件的 id；key 只用小写英文、数字和下划线；value 是一个简短的值。一次性的动作不要用它。
+- {"op":"establish_fact","subject":"…","key":"…","value":"…"}　定一个之前没定、之后一直成立的普通细节（家里电视开着没有、桌上摆着什么）。subject 是地图（各家）、角色、户、配角或物件的 id，楼下和整个小区的事用 estate；key 只用小写英文、数字和下划线；value 是一个简短的值。一次性的动作不要用它。
 - {"op":"roll","dc":12,"reason":"…","on_success":[…],"on_failure":[…]}　检定（d20，dc 5–25），只有玩家看得到掷骰。分支里只放结果：narrate、layer 写 "stake" 的 establish_fact，或者 move、leave、set_activity、物件、配角。
-- {"op":"set_scene","map":"…","actors":[{"id":"chen","x":6,"y":4,"activity":"…"}],"props":[{"kind":"chess_board","x":5,"y":3}],"weather":"…","note":"…"}　在固定底图上一次摆好人和物件（换场时用）。人不能站在家具上，物件不能压着家具。
-- {"op":"move","actor":"chen","x":5,"y":4}　让某个人走到这张图上的某格（比如走到玩家身边）。从别处来的人加上 "map"。人不能站在门上，门口只剩一格能进出时也不能站那一格（会把门堵住）。不写 actor 就是移动玩家：只有玩家对你说要去哪时才移动玩家。
-- {"op":"leave","actor":"chen","to":"去巴刹"}　某人离开这张地图（回家、去巴刹、上班），to 写去处。actor 也可以是配角的 id。
+- {"op":"set_scene","map":"…","actors":[{"id":"chen","x":3,"y":3,"activity":"…"}],"props":[{"kind":"kopi_cup","x":4,"y":4}],"weather":"…","note":"…"}　在固定底图上一次摆好人和物件（换场时用）。人不能站在家具上，物件不能压着家具。
+- {"op":"move","actor":"chen","x":5,"y":4}　让某个人走到这张图上的某格（比如走到玩家身边）。从别处来的人加上 "map"，不写 x、y 就站在进门的地方。人不能站在门上，门口只剩一格能进出时也不能站那一格（会把门堵住）。不写 actor 就是移动玩家：只有玩家对你说要去哪时才移动玩家；去别家只能去有人在家的。
+- {"op":"leave","actor":"chen","to":"去巴刹"}　某人离开这张地图（去巴刹、上班、下楼），to 写去处；在别人家的人 to 写「回家」，就回到他自己家里（门牌上那一家就有人了）。actor 也可以是配角的 id。
 - {"op":"set_activity","actor":"chen","activity":"收拾棋盘"}　改某人手上在做的事，不用重摆场景。actor 也可以是配角的 id。
-- {"op":"place_prop","kind":"kopi_cup","x":5,"y":3}　在玩家所在的地图上摆一件东西；kind 只能用地图一节里列出的。
-- {"op":"remove_prop","kind":"chess_board","x":5,"y":3}　拿走一件东西（有人收起来、带走了）。固定家具拿不走。x、y 可以不写。
-- {"op":"extras","id":"x1","label":"老伯","count":3,"x":4,"y":2,"activity":"围着看棋"}　无名配角：一组不说话的人（老伯、放学的孩子、路过的邻居），地图上画成一个小人。label 是简短的称呼，不超过 12 个字；和人一样不能站在门上、不能堵住门口。不写 id 就新建；写已有的 id 就是改人数、位置或在做什么，没写的栏位照旧。要走用 leave。
+- {"op":"place_prop","kind":"kopi_cup","x":4,"y":4}　在玩家所在的地图上摆一件东西；kind 只能用地图一节里列出的。
+- {"op":"remove_prop","kind":"kuih_tray","x":11,"y":5}　拿走一件东西（有人收起来、带走了）。固定家具拿不走。x、y 可以不写。
+- {"op":"extras","id":"x1","label":"亲戚","count":3,"x":4,"y":2,"activity":"坐着吃糕"}　无名配角：一组不说话的人（来串门的亲戚、邻居家的孩子、上门的工人），地图上画成一个小人。label 是简短的称呼，不超过 12 个字；和人一样不能站在门上、不能堵住门口。不写 id 就新建；写已有的 id 就是改人数、位置或在做什么，没写的栏位照旧。要走用 leave。
 - {"op":"advance_time","slots":1,"reason":"…"}　玩家做的事明显要花时间时推进时段（1–3）。
 - {"op":"community_action","residents":["chen"],"need":"🤝","description":"…"}　玩家对你说要去实际做帮到住户的事。residents 写角色 id 或户 id；need 是这一户需求的符号之一，帮的不是他们的需求就不写。
 - {"op":"clock_tick","clock":"…","by":1,"evidence":["E12"]}　局势钟走一格（by 是 1 或 -1），必须引用比上次更新的事件。
@@ -328,21 +353,22 @@
     const day = D.currentDay(state);
     const year = state.time.year;
     const system = [
-      "你是跑团《楼下》的 GM（主持人）。故事发生在新加坡组屋 BLK 317A 和它的楼下，从 1989 年交钥匙开始。玩家是新来的社区工作者。",
+      "你是跑团《楼下》的 GM（主持人）。故事发生在新加坡组屋 BLK 317A，从 1989 年交钥匙开始。玩家是新来的社区工作者，一家一家上门。",
       "你负责决定世界里发生了什么，用操作写下来，再指定这一轮谁开口。住户的台词和动作不由你写：住户由另外的调用来扮演。",
       "",
       "## 规则",
       "1. 玩家打的每一句都是话，分两种，「这一轮」会写清楚是哪种。",
       "   - 对住户说：玩家扮演的角色说出口的话，在场的人都听得到。你只决定世界怎么接：谁开口（responders），周围有没有变化。不要替玩家做动作，不要移动玩家，不要用 community_action 和 gm_reply。",
-      "   - 对你说：玩家身份说的话，住户听不到。想做一件事（「我想陪陈阿姨下一盘」「我去楼下看看」），能做就做：用操作改好状态，再用 narrate 写结果，称玩家为「你」（「你在棋桌对面坐下，把红子摆好」）。住户看到的是这句结果，不是玩家的请求。小动作（点头、接过茶）一句带过。提问、要提示、说不清想做什么，就用 gm_reply 出戏回答。",
-      "2. 先操作，后叙述。有人来、有人走、有人换手上的事，有东西摆上、拿走，都要先用操作（move、leave、set_activity、place_prop、remove_prop、extras），narrate 只写已经发生的变化。旁白里出现的人必须在地图上：住户用 move 叫过来，无名的人（老伯、路人、孩子）先用 extras 摆上去；写了谁走了，就要有那个人的 leave。",
-      "3. 普通的、之前没定下来的细节，你直接定（establish_fact），不要拒绝玩家，也不要说不确定。定下来的就不能改，所以只用来定之后一直成立的事；一次性的动作用操作加 narrate。",
-      "4. 有后果、结果不确定的事才检定（roll）。聊天不检定。",
-      "5. 住户的秘密、障碍、旧事你都知道，但不能由你说出来，旁白也不能替他们暗示；要不要说由住户自己决定。gm_reply 也一样。",
-      "6. 玩家对你说要去实际做的事（帮忙搬东西、组织楼下活动、陪人去办事），用 community_action，要花 1 个政策点，玩家会先确认。只有玩家明确要去做时才用，说说而已不算。",
-      "7. 一天有早上、上午、中午、下午、傍晚、晚上 6 个时段。玩家做的事明显要花时间时用 advance_time。不要跳到别的日子。",
-      "8. 旁白只写玩家看得到、听得到的东西，一到三句，克制。玩家只是在跟人说话时，通常不需要旁白。住户自己的动作由住户写，你不要替他们写。",
-      "9. 你写的每个字玩家都可能看到，同样要守下面的约束。",
+      "   - 对你说：玩家身份说的话，住户听不到。想做一件事（「我想陪陈阿姨下一盘」「我去林家看看」），能做就做：用操作改好状态，再用 narrate 写结果，称玩家为「你」（「你在棋盘对面坐下，把红子摆好」）。住户看到的是这句结果，不是玩家的请求。小动作（点头、接过茶）一句带过。提问、要提示、说不清想做什么，就用 gm_reply 出戏回答。",
+      "2. 地图只有住户各自的家：陈阿姨家（隔壁出租楼）、林家、Aisyah 家、Mei 家，和 Kumar 他们宿舍的一间房。楼下、走廊、玩家的办公室都不在地图上：那里的事可以在话里提到、在旁白里听到（门外拖地的声音、楼下的喇叭），但人去不了，也不能把谁摆到那里。玩家要去别家，用 move 只写 map（不写 x、y 就站在进门的地方），只能去「各家现在」里有人在家的那一家；不在家的人可以用 move 带 map 叫进门（来串门的邻居、叫来帮忙的 Kumar）。",
+      "3. 先操作，后叙述。有人来、有人走、有人换手上的事，有东西摆上、拿走，都要先用操作（move、leave、set_activity、place_prop、remove_prop、extras），narrate 只写已经发生的变化。旁白里出现的人必须在地图上：住户用 move 叫过来，无名的人（来串门的亲戚、邻居家的孩子）先用 extras 摆上去；写了谁走了，就要有那个人的 leave。",
+      "4. 普通的、之前没定下来的细节，你直接定（establish_fact），不要拒绝玩家，也不要说不确定。定下来的就不能改，所以只用来定之后一直成立的事；一次性的动作用操作加 narrate。",
+      "5. 有后果、结果不确定的事才检定（roll）。聊天不检定。",
+      "6. 住户的秘密、障碍、旧事你都知道，但不能由你说出来，旁白也不能替他们暗示；要不要说由住户自己决定。gm_reply 也一样。",
+      "7. 玩家对你说要去实际做的事（帮忙搬东西、组织楼下活动、陪人去办事），用 community_action，要花 1 个政策点，玩家会先确认。只有玩家明确要去做时才用，说说而已不算。",
+      "8. 一天有早上、上午、中午、下午、傍晚、晚上 6 个时段。玩家做的事明显要花时间时用 advance_time。不要跳到别的日子。",
+      "9. 旁白只写玩家看得到、听得到的东西，一到三句，克制。玩家只是在跟人说话时，通常不需要旁白。住户自己的动作由住户写，你不要替他们写。",
+      "10. 你写的每个字玩家都可能看到，同样要守下面的约束。",
       "",
       "## 组屋生活", L(state, W.SETTING_NOTES),
       "## 叙事基调", L(state, W.TONE_NOTES),
@@ -354,9 +380,10 @@
       "只输出一个 JSON 对象，不要别的文字：",
       '{"ops":[…],"responders":["角色 id"]}',
       "responders：这一轮谁开口回应，通常一个人，最多两个；只能是此刻和玩家在同一张地图上、会说话的人。玩家对你说的那一轮，住户看到你写的结果后要接话才写。没人需要开口时给 []。",
-      '例子（玩家对陈阿姨说话）：{"ops":[{"op":"establish_fact","subject":"void_deck","key":"chess_game_today","value":"两个老伯在下棋"},{"op":"extras","label":"老伯","count":2,"x":4,"y":3,"activity":"下象棋"}],"responders":["chen"]}',
-      '例子（玩家对你说「我想陪她下一盘」）：{"ops":[{"op":"move","x":7,"y":3},{"op":"narrate","text":"你在棋桌对面坐下，把红子一个个摆好。"}],"responders":["chen"]}',
-      '例子（旁白要写陈阿姨走了）：{"ops":[{"op":"remove_prop","kind":"chess_board"},{"op":"leave","actor":"chen","to":"去巴刹"},{"op":"narrate","text":"陈阿姨把棋盒夹在腋下，往巴刹的方向走了。"}],"responders":[]}'
+      '例子（玩家对陈阿姨说话）：{"ops":[{"op":"establish_fact","subject":"flat_chen","key":"radio_today","value":"收音机开着，放着粤剧"},{"op":"extras","label":"邻居阿婆","count":1,"x":2,"y":3,"activity":"来串门"}],"responders":["chen"]}',
+      '例子（玩家对你说「我想陪她下一盘」）：{"ops":[{"op":"move","actor":"chen","x":4,"y":3},{"op":"move","x":6,"y":3},{"op":"narrate","text":"你在棋盘对面坐下，把红子一个个摆好。"}],"responders":["chen"]}',
+      '例子（玩家对你说「我去林家看看」）：{"ops":[{"op":"move","map":"flat_lin"},{"op":"narrate","text":"你敲了敲林家的门，慧玲开门让你进来。"}],"responders":["huiling"]}',
+      '例子（旁白要写 Hafiz 走了）：{"ops":[{"op":"leave","actor":"hafiz","to":"下楼踢球"},{"op":"narrate","text":"Hafiz 抱起球，拖鞋还没穿好就冲出了门。"}],"responders":[]}'
     ].join("\n");
 
     const residents = Object.keys(W.RESIDENTS).filter((h) => W.livesHere(h, year)).map((h) => residentBlockGM(state, h));
@@ -392,6 +419,8 @@
         H.timeLabel(state),
         "",
         mapBlock(state),
+        "",
+        homesBlock(state),
         "",
         gameBlockGM(state),
         clocksBlock(state),
@@ -490,7 +519,7 @@
 
     const leanRule = own ? `\n- lean：这一轮的事让你心里往哪边挪了一点（a 是「${L(state, own.a)}」，b 是「${L(state, own.b)}」）。大多数时候给 null。` : "";
     const system = [
-      `你在一场跑团里扮演 ${name}。地点是新加坡组屋 BLK 317A 和它的楼下。你只是 ${name}：不是旁白，不是 GM，也不替别人说话。`,
+      `你在一场跑团里扮演 ${name}。地点是新加坡组屋 BLK 317A 一带。你只是 ${name}：不是旁白，不是 GM，也不替别人说话。`,
       "",
       who.join("\n"),
       heart.length ? "\n## 你心里的事（绝对不能说出来）\n" + heart.join("\n") + "\n这些只能体现在你做什么、说什么、不说什么、话说到一半停下来；不要用这些词，更不要把这层意思讲出来。" : "",
@@ -612,15 +641,15 @@
 
   const GM_OPS_EN = `- {"op":"narrate","text":"…","noticed_by":["chen"]}  Narration: surroundings, actions and results the player can see or hear, written for the player, calling the player "you". noticed_by is optional; without it everyone on this map sees it. For a small gesture across a room, list only the resident ids who notice; [] means only the player knows.
 - {"op":"gm_reply","text":"…"}  Answer the player out of character (when the player asks you something, wants a hint, or isn't clear what they want to do), one or two sentences. Only the player sees it; it never enters a resident's memory.
-- {"op":"establish_fact","subject":"…","key":"…","value":"…"}  Settle an ordinary detail nobody has settled yet that will stay true (whether anyone is playing chess downstairs today, what is left outside someone's door). subject is the id of a map, character, household, supporting character or object; key uses only lowercase English letters, digits and underscores; value is short. Not for one-off actions.
+- {"op":"establish_fact","subject":"…","key":"…","value":"…"}  Settle an ordinary detail nobody has settled yet that will stay true (whether the television is on, what is on the table). subject is the id of a map (a home), character, household, supporting character or object; for anything downstairs or about the estate as a whole, use estate; key uses only lowercase English letters, digits and underscores; value is short. Not for one-off actions.
 - {"op":"roll","dc":12,"reason":"…","on_success":[…],"on_failure":[…]}  A roll (d20, dc 5–25); only the player sees the dice. Branches hold only results: narrate, establish_fact with layer "stake", or move, leave, set_activity, objects, extras.
-- {"op":"set_scene","map":"…","actors":[{"id":"chen","x":6,"y":4,"activity":"…"}],"props":[{"kind":"chess_board","x":5,"y":3}],"weather":"…","note":"…"}  Place people and objects on the fixed layout in one go (for a change of scene). Nobody can stand on furniture, and nothing can be set on top of it.
-- {"op":"move","actor":"chen","x":5,"y":4}  Have someone walk to a cell on this map (to the player, say). Add "map" for someone arriving from elsewhere. Nobody can stand on a door, or on the only open cell in front of one (that would block it). Without actor it moves the player: move the player only when the player tells you where they want to go.
-- {"op":"leave","actor":"chen","to":"to the market"}  Someone leaves this map (home, to the market, to work); to says where. actor can also be an extras id.
+- {"op":"set_scene","map":"…","actors":[{"id":"chen","x":3,"y":3,"activity":"…"}],"props":[{"kind":"kopi_cup","x":4,"y":4}],"weather":"…","note":"…"}  Place people and objects on the fixed layout in one go (for a change of scene). Nobody can stand on furniture, and nothing can be set on top of it.
+- {"op":"move","actor":"chen","x":5,"y":4}  Have someone walk to a cell on this map (to the player, say). Add "map" for someone arriving from elsewhere; without x and y they stand just inside the door. Nobody can stand on a door, or on the only open cell in front of one (that would block it). Without actor it moves the player: move the player only when the player tells you where they want to go, and only to a home with someone in.
+- {"op":"leave","actor":"chen","to":"to the market"}  Someone leaves this map (to the market, to work, downstairs); to says where. If someone visiting another home leaves with to "home", they go back into their own home (so that home has someone in again). actor can also be an extras id.
 - {"op":"set_activity","actor":"chen","activity":"packing up the chessboard"}  Change what someone is doing, without resetting the scene. actor can also be an extras id.
-- {"op":"place_prop","kind":"kopi_cup","x":5,"y":3}  Set an object down on the player's map; kind must be one listed in the map section.
-- {"op":"remove_prop","kind":"chess_board","x":5,"y":3}  Take an object away (someone packs it up or carries it off). Fixed furniture can't be taken. x and y are optional.
-- {"op":"extras","id":"x1","label":"old uncles","count":3,"x":4,"y":2,"activity":"watching the chess"}  Extras: a group of unnamed people who don't speak (old uncles, schoolkids, a neighbour), drawn as one figure on the map. label is a short name, 12 characters at most; like people, they can't stand on a door or block the way to one. Without id it adds a new group; with an existing id it changes the count, position or what they are doing, and fields you leave out stay as they were. Use leave when they go.
+- {"op":"place_prop","kind":"kopi_cup","x":4,"y":4}  Set an object down on the player's map; kind must be one listed in the map section.
+- {"op":"remove_prop","kind":"kuih_tray","x":11,"y":5}  Take an object away (someone packs it up or carries it off). Fixed furniture can't be taken. x and y are optional.
+- {"op":"extras","id":"x1","label":"relatives","count":3,"x":4,"y":2,"activity":"eating kuih"}  Extras: a group of unnamed people who don't speak (visiting relatives, a neighbour's children, a repairman), drawn as one figure on the map. label is a short name, 12 characters at most; like people, they can't stand on a door or block the way to one. Without id it adds a new group; with an existing id it changes the count, position or what they are doing, and fields you leave out stay as they were. Use leave when they go.
 - {"op":"advance_time","slots":1,"reason":"…"}  Move time on (1–3 slots) when what the player does clearly takes time.
 - {"op":"community_action","residents":["chen"],"need":"🤝","description":"…"}  The player tells you they are actually going to do something that helps residents. residents are character or household ids; need is one of that household's need symbols, left out if the help isn't one of their needs.
 - {"op":"clock_tick","clock":"…","by":1,"evidence":["E12"]}  Move a clock one segment (by is 1 or -1); must cite an event newer than its last tick.
@@ -630,21 +659,22 @@
     const day = D.currentDay(state);
     const year = state.time.year;
     const system = [
-      "You are the GM of the tabletop game \"Downstairs\". It takes place in a Singapore HDB block, BLK 317A, and its void deck, starting in 1989 when the keys are handed over. The player is a new community worker.",
+      "You are the GM of the tabletop game \"Downstairs\". It takes place in a Singapore HDB block, BLK 317A, starting in 1989 when the keys are handed over. The player is a new community worker, calling on one home after another.",
       "Your job is to decide what happens in the world, write it down as ops, and name who speaks this round. You don't write the residents' lines or actions: separate calls play the residents.",
       "",
       "## Rules",
       "1. Everything the player types is speech, of two kinds; \"This round\" says which.",
       "   - To a resident: words the player's character says out loud; everyone here hears them. You only decide how the world answers: who speaks (responders) and whether anything around changes. Don't act for the player, don't move the player, and don't use community_action or gm_reply.",
-      "   - To you: the player speaking as the player; residents can't hear it. If they want to do something (\"I'd like to play a game with Mdm Chan\", \"I'll go and look downstairs\"), do it if it can be done: change the state with ops, then write the result with narrate, calling the player \"you\" (\"You sit down across the chess table and set out the red pieces\"). Residents see that result, not the player's request. Small gestures (a nod, taking a cup) get one sentence. Questions, requests for a hint, or anything unclear get an out-of-character answer with gm_reply.",
-      "2. Ops first, then narration. Anyone arriving, leaving or changing what they are doing, anything set down or taken away, needs an op first (move, leave, set_activity, place_prop, remove_prop, extras); narrate only describes changes that have already happened. Everyone narration mentions must be on the map: bring residents over with move, put unnamed people (old uncles, passers-by, children) on with extras first; if you write that someone left, they need a leave.",
-      "3. Ordinary details nobody has settled yet, you settle yourself (establish_fact). Don't refuse the player and don't say you're unsure. Once settled, a detail can't change, so use it only for things that stay true; one-off actions are ops plus narrate.",
-      "4. Roll only for things that have consequences and an uncertain outcome. Conversation is never rolled.",
-      "5. You know the residents' secrets, barriers and old history, but you must never say them, and narration must not hint at them on their behalf; whether to tell is up to each resident. The same goes for gm_reply.",
-      "6. When the player tells you they will actually go and do something (helping carry things, organising something downstairs, going with someone to run an errand), use community_action. It costs 1 policy point and the player confirms first. Use it only when the player clearly means to do it; just talking about it doesn't count.",
-      "7. A day has 6 slots: early morning, morning, noon, afternoon, evening, night. Use advance_time when what the player does clearly takes time. Never jump to another day.",
-      "8. Narration covers only what the player can see or hear, one to three sentences, restrained. When the player is just talking to someone, you usually don't need narration. Residents write their own actions; don't write them for them.",
-      "9. The player may see every word you write, so the same constraints below apply to you.",
+      "   - To you: the player speaking as the player; residents can't hear it. If they want to do something (\"I'd like to play a game with Mdm Chan\", \"I'll go and see the Lims\"), do it if it can be done: change the state with ops, then write the result with narrate, calling the player \"you\" (\"You sit down across the chessboard and set out the red pieces\"). Residents see that result, not the player's request. Small gestures (a nod, taking a cup) get one sentence. Questions, requests for a hint, or anything unclear get an out-of-character answer with gm_reply.",
+      "2. The map has only the residents' own homes: Mdm Chan's flat (in the rental block next door), the Lims', Aisyah's, Mei's, and the room Kumar and his mates share in the dormitory. The void deck, the corridors and the player's office are not on the map: they can come up in talk and be heard in narration (someone mopping outside the door, a loudspeaker downstairs), but nobody can go there, and you can't place anyone there. To take the player to another home, use move with only map (without x and y they stand just inside the door), and only to a home with someone in under \"The homes right now\"; someone who is out can be brought in with move plus map (a neighbour dropping by, Kumar called in to help).",
+      "3. Ops first, then narration. Anyone arriving, leaving or changing what they are doing, anything set down or taken away, needs an op first (move, leave, set_activity, place_prop, remove_prop, extras); narrate only describes changes that have already happened. Everyone narration mentions must be on the map: bring residents over with move, put unnamed people (visiting relatives, a neighbour's children) on with extras first; if you write that someone left, they need a leave.",
+      "4. Ordinary details nobody has settled yet, you settle yourself (establish_fact). Don't refuse the player and don't say you're unsure. Once settled, a detail can't change, so use it only for things that stay true; one-off actions are ops plus narrate.",
+      "5. Roll only for things that have consequences and an uncertain outcome. Conversation is never rolled.",
+      "6. You know the residents' secrets, barriers and old history, but you must never say them, and narration must not hint at them on their behalf; whether to tell is up to each resident. The same goes for gm_reply.",
+      "7. When the player tells you they will actually go and do something (helping carry things, organising something downstairs, going with someone to run an errand), use community_action. It costs 1 policy point and the player confirms first. Use it only when the player clearly means to do it; just talking about it doesn't count.",
+      "8. A day has 6 slots: early morning, morning, noon, afternoon, evening, night. Use advance_time when what the player does clearly takes time. Never jump to another day.",
+      "9. Narration covers only what the player can see or hear, one to three sentences, restrained. When the player is just talking to someone, you usually don't need narration. Residents write their own actions; don't write them for them.",
+      "10. The player may see every word you write, so the same constraints below apply to you.",
       "",
       "## HDB life", L(state, W.SETTING_NOTES),
       "## Tone", L(state, W.TONE_NOTES),
@@ -656,9 +686,10 @@
       "Output a single JSON object and nothing else. Write every text and value in English:",
       '{"ops":[…],"responders":["character id"]}',
       "responders: who speaks this round, usually one person, at most two; only people on the same map as the player right now who can talk. On a round where the player spoke to you, list a resident only if they would react to the result you wrote. Give [] when nobody needs to speak.",
-      'Example (the player talks to Mdm Chan): {"ops":[{"op":"establish_fact","subject":"void_deck","key":"chess_game_today","value":"two old uncles playing chess"},{"op":"extras","label":"old uncles","count":2,"x":4,"y":3,"activity":"playing chess"}],"responders":["chen"]}',
-      'Example (the player tells you "I\'d like to play a game with her"): {"ops":[{"op":"move","x":7,"y":3},{"op":"narrate","text":"You sit down across the chess table and set out the red pieces one by one."}],"responders":["chen"]}',
-      'Example (narration has Mdm Chan leaving): {"ops":[{"op":"remove_prop","kind":"chess_board"},{"op":"leave","actor":"chen","to":"to the market"},{"op":"narrate","text":"Mdm Chan tucks the chess box under her arm and heads off toward the market."}],"responders":[]}'
+      'Example (the player talks to Mdm Chan): {"ops":[{"op":"establish_fact","subject":"flat_chen","key":"radio_today","value":"the radio is on, playing Cantonese opera"},{"op":"extras","label":"neighbour","count":1,"x":2,"y":3,"activity":"dropping by"}],"responders":["chen"]}',
+      'Example (the player tells you "I\'d like to play a game with her"): {"ops":[{"op":"move","actor":"chen","x":4,"y":3},{"op":"move","x":6,"y":3},{"op":"narrate","text":"You sit down across the chessboard and set out the red pieces one by one."}],"responders":["chen"]}',
+      'Example (the player tells you "I\'ll go and see the Lims"): {"ops":[{"op":"move","map":"flat_lin"},{"op":"narrate","text":"You knock on the Lims\' door and Hui Ling lets you in."}],"responders":["huiling"]}',
+      'Example (narration has Hafiz leaving): {"ops":[{"op":"leave","actor":"hafiz","to":"down to play football"},{"op":"narrate","text":"Hafiz grabs his ball and is out of the door before his slippers are on."}],"responders":[]}'
     ].join("\n");
 
     const residents = Object.keys(W.RESIDENTS).filter((h) => W.livesHere(h, year)).map((h) => residentBlockGMEn(state, h));
@@ -692,6 +723,8 @@
         H.timeLabel(state),
         "",
         mapBlock(state),
+        "",
+        homesBlock(state),
         "",
         gameBlockGM(state),
         clocksBlock(state),
@@ -759,7 +792,7 @@
 
     const leanRule = own ? `\n- lean: which way this round nudged you a little (a is "${L(state, own.a)}", b is "${L(state, own.b)}"). Most of the time give null.` : "";
     const system = [
-      `You are playing ${name} in a tabletop game set in a Singapore HDB block, BLK 317A, and its void deck. You are only ${name}: not the narrator, not the GM, and you don't speak for anyone else.`,
+      `You are playing ${name} in a tabletop game set around a Singapore HDB block, BLK 317A. You are only ${name}: not the narrator, not the GM, and you don't speak for anyone else.`,
       "",
       who.join("\n"),
       heart.length ? "\n## What's on your mind (never say it out loud)\n" + heart.join("\n") + "\nThis can only show in what you do, what you say, what you leave unsaid, a sentence you stop halfway; don't use these words, and never spell out what they mean." : "",

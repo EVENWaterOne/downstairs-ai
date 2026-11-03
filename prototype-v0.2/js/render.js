@@ -1,5 +1,6 @@
 /* 画棋盘：平面图 + 棋子（M2 的占位美术，10-28 Polaris：朴素简单，但不能难看）。
- * 全部用 canvas 现画，不用外部素材：墙、地面、草地、门是色块，家具是带图标的小方块，人是圆形棋子。
+ * 全部用 canvas 现画，不用外部素材：墙、地面、门是色块，家具是带图标的小方块，人是圆形棋子。
+ * 11-02 只剩各家：不再画楼下的草地、栏杆、柱子和地块，门一律写"出门"（换家用门牌栏，见 app.js）。
  * 以后换成生成的图，只改这个文件。 */
 (function (root) {
   "use strict";
@@ -8,10 +9,9 @@
 
   const PALETTE = {
     wall: "#4d5560", wallTop: "#677080", grid: "rgba(90,70,40,0.07)",
-    floor: { flat: "#f2e9d8", corridor: "#ebe9e3", void_deck: "#e7e5df", office: "#eeebe3", dorm: "#e6e1d6" },
-    grass: "#d3e4c2", grassDot: "#bdd4a6", rail: "#9aa3ad", pillar: "#bfc2c8", pillarEdge: "#a2a6ae",
-    door: "#c9a46a", doorShut: "#b9a58a", doorText: "#fffaf0",
-    furn: "#e2d5bd", furnEdge: "#cbb995", plot: "#9fb98a", built: "#fff6df", builtEdge: "#c79a4b",
+    floor: { flat: "#f2e9d8", dorm: "#e6e1d6" },
+    door: "#c9a46a", doorText: "#fffaf0",
+    furn: "#e2d5bd", furnEdge: "#cbb995",
     ink: "#2b2f36", inkSoft: "#6b7280", halo: "rgba(255,255,255,0.85)",
     player: "#1f2933", focus: "#e8833a", extras: "#9aa1aa"
   };
@@ -21,18 +21,12 @@
   // 英文版用名字的首字母；同一户里重了就多取一个字母
   const MARK_EN = { chen: "C", weiming: "WM", huiling: "HL", junhao: "JH", rahman: "R", aisyah_kassim: "A", nurul: "N", hafiz: "H", mak_esah: "E", kumar: "K", wangmei: "M", jianguo: "JG", xiaoyu: "XY" };
   const GLYPH = {
-    chess_table: "♟️", chess_board: "♟️", red_headscarf: "🧣", clogs: "👡", long_table: "🥘", wedding_tent: "⛺", funeral_wake: "🕯️",
-    prayer_mat: "🕌", kuih_tray: "🍡", laundry_pole: "👕", shoe_rack: "👟", potted_plant: "🪴", altar: "🏮", tv: "📺", sofa: "🛋️",
+    chess_board: "♟️", red_headscarf: "🧣", clogs: "👡", long_table: "🥘",
+    prayer_mat: "🕌", kuih_tray: "🍡", laundry_pole: "👕", potted_plant: "🪴", altar: "🏮", tv: "📺", sofa: "🛋️",
     flashcards: "🔤", bicycle: "🚲", skateboard: "🛹", boxes: "📦", calendar: "📅", couplets: "🧧", bunk: "🛏️", locker: "🗄️",
-    family_photo: "🖼️", shrine: "🪔", lunch_tiffin: "🍱", kopi_cup: "☕", flyer: "📄", notice: "📌", bench: "🪑", trolley: "🧹",
-    forms: "📋", desk: "🗂️", bed: "🛏️", table: "🍽️", stove: "🍳", wardrobe: "👔"
+    family_photo: "🖼️", shrine: "🪔", lunch_tiffin: "🍱", kopi_cup: "☕", flyer: "📄",
+    forms: "📋", bed: "🛏️", table: "🍽️", stove: "🍳", wardrobe: "👔"
   };
-  const FACILITY_GLYPH = { club: "🏓", smart: "📱", hawker: "🍜", walkway: "☂️", bus: "🚌", roof: "🌿", solar: "☀️", rain: "🌧️", childcare: "🧸", daycare: "🫖", feedback: "📮", rest: "⛱️", canteen: "🍛", blank: "🌳" };
-  const DOOR_LABEL = {
-    flat_lin: { zh: "林家", en: "Lims" }, flat_aisyah: { zh: "Aisyah", en: "Aisyah" }, flat_mei: { zh: "Mei", en: "Mei" }, flat_chen: { zh: "陈阿姨", en: "Chan" },
-    corridor: { zh: "楼上", en: "Up" }, void_deck: { zh: "楼下", en: "Down" }, office: { zh: "办公室", en: "Office" }, dorm: { zh: "宿舍", en: "Dorm" }
-  };
-  const OUTSIDE = new Set(["office", "dorm"]);
   const FONT_ZH = '"PingFang SC","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif';
   const FONT_EN = '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans SC",sans-serif';
   let FONT = FONT_ZH;
@@ -77,7 +71,7 @@
     }
 
     function drawTiles(state, id) {
-      const m = M.MAPS[id], year = state.time.year;
+      const m = M.MAPS[id];
       m.rows.forEach((row, y) => {
         for (let x = 0; x < row.length; x++) {
           const t = row[x], px = x * T, py = y * T;
@@ -86,53 +80,20 @@
             ctx.fillStyle = PALETTE.wallTop; ctx.fillRect(px, py, T, 5);
             continue;
           }
-          const grassy = t === "~" || (/[1-7]/.test(t) && id === "void_deck");
-          ctx.fillStyle = grassy ? PALETTE.grass : floorFor(id);
+          ctx.fillStyle = floorFor(id);
           ctx.fillRect(px, py, T, T);
-          if (grassy) { ctx.fillStyle = PALETTE.grassDot; ctx.fillRect(px + 7, py + 9, 2, 2); ctx.fillRect(px + 21, py + 19, 2, 2); ctx.fillRect(px + 14, py + 26, 2, 2); }
-          else { ctx.strokeStyle = PALETTE.grid; ctx.lineWidth = 1; ctx.strokeRect(px + 0.5, py + 0.5, T - 1, T - 1); }
-          if (t === "=") {
-            ctx.fillStyle = PALETTE.rail; ctx.fillRect(px, py + 12, T, 4);
-            for (let i = 2; i < T; i += 8) ctx.fillRect(px + i, py + 4, 2, 22);
-          } else if (t === "o") {
-            ctx.fillStyle = PALETTE.pillar; rr(ctx, px + 4, py + 4, T - 8, T - 8, 3); ctx.fill();
-            ctx.strokeStyle = PALETTE.pillarEdge; ctx.lineWidth = 1.5; ctx.stroke();
-          } else if (m.exits[t]) {
-            const ex = m.exits[t];
-            const hid = B.homeOf(ex.to);
-            const shut = hid && hid !== "kumar" && !W.livesHere(hid, year);
-            ctx.fillStyle = shut ? PALETTE.doorShut : PALETTE.door;
+          ctx.strokeStyle = PALETTE.grid; ctx.lineWidth = 1; ctx.strokeRect(px + 0.5, py + 0.5, T - 1, T - 1);
+          if (m.exits[t]) {
+            // 门：写"出门"。换一家用地图上面的门牌，不走门
+            ctx.fillStyle = PALETTE.door;
             rr(ctx, px + 3, py + 3, T - 6, T - 6, 4); ctx.fill();
-            // 从家里、办公室、宿舍出去写"出门"；楼梯和电梯照实写；别的门写通到哪
-            let name = L(state.lang, DOOR_LABEL[ex.to]);
-            if (OUTSIDE.has(id) || id.startsWith("flat_")) name = state.lang === "en" ? "Out" : "出门";
-            if (t === "S") name = state.lang === "en" ? "Stairs" : "楼梯";
-            if (t === "L") name = state.lang === "en" ? "Lift" : "电梯";
-            if (shut) name = state.lang === "en" ? "Shut" : "邻居";
-            ctx.font = `600 ${name.length > 3 ? 8 : 10}px ${FONT}`;
+            const name = state.lang === "en" ? "Out" : "出门";
+            ctx.font = `600 10px ${FONT}`;
             ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = PALETTE.doorText;
             ctx.fillText(name, px + T / 2, py + T / 2 + 1);
           }
         }
       });
-      // 楼下的地块：游戏端建了什么，就画什么
-      if (m.plots) {
-        for (const [n, [x, y]] of Object.entries(m.plots)) {
-          const card = (state.game.plots || {})[n];
-          const px = x * T, py = y * T;
-          if (card) {
-            ctx.fillStyle = PALETTE.built; rr(ctx, px + 1, py + 1, T - 2, T - 2, 6); ctx.fill();
-            ctx.strokeStyle = PALETTE.builtEdge; ctx.lineWidth = 1.5; ctx.stroke();
-            glyph(ctx, FACILITY_GLYPH[card] || "🏠", px + T / 2, py + T / 2 - 1, 17);
-            label(ctx, L(state.lang, W.FACILITIES[card].name), px + T / 2, py + T + 7, 9, PALETTE.ink, 600);
-          } else {
-            ctx.setLineDash([3, 3]); ctx.strokeStyle = PALETTE.plot; ctx.lineWidth = 1.5;
-            rr(ctx, px + 4, py + 4, T - 8, T - 8, 5); ctx.stroke(); ctx.setLineDash([]);
-            ctx.font = `600 10px ${FONT}`; ctx.fillStyle = PALETTE.plot; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-            ctx.fillText(n, px + T / 2, py + T / 2);
-          }
-        }
-      }
     }
 
     function drawThings(state, id) {

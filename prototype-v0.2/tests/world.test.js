@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { W, M } = require("./load");
+const { W, M, H } = require("./load");
 
 function bilingual(obj, where) {
   if (obj && typeof obj === "object" && !Array.isArray(obj)) {
@@ -69,22 +69,84 @@ test("Mei 一家 1994 年才搬来（317A 的屋主住满 5 年才能转售）�
   assert.deepEqual(W.membersAt("kumar", 2014).map((m) => m.id), ["murugan"]);
 });
 
-test("地图出入口互相连通，落点都能站人", () => {
+test("只有各家的房间：每家一扇门，门不通到别的图，进门的地方能站人、走得到屋里每一格", () => {
+  // 11-02 Polaris：只做每个住户自己的房间，办公室、走廊、楼下都不做
+  assert.deepEqual(Object.keys(M.MAPS).sort(), [...M.HOMES].sort(), "地图只有门牌栏上的这几家");
+  assert.equal(new Set(M.HOMES).size, M.HOMES.length, "门牌不重复");
+  const homes = Object.values(W.RESIDENTS).map((r) => r.home);
+  assert.deepEqual([...homes].sort(), [...M.HOMES].sort(), "每户人家各有一张图，每张图都是某一户的家");
+  const furnitureCells = (id) => new Set((M.FURNITURE[id] || []).map(([, x, y]) => x + "," + y));
   for (const [id, m] of Object.entries(M.MAPS)) {
     const width = m.rows[0].length;
     m.rows.forEach((row, y) => assert.equal(row.length, width, `${id} 第 ${y} 行宽度`));
-    for (const [letter, ex] of Object.entries(m.exits)) {
-      assert.ok(m.rows.some((row) => row.includes(letter)), `${id} 图上没有出口 ${letter}`);
-      assert.ok(M.MAPS[ex.to], `${id}.${letter} 通往不存在的 ${ex.to}`);
-      assert.ok(M.standable(ex.to, ex.at[0], ex.at[1]), `${id}.${letter} 的落点 ${ex.to}(${ex.at}) 不能站人`);
+    const letters = Object.keys(m.exits);
+    assert.equal(letters.length, 1, `${id} 只有一扇门`);
+    const [letter] = letters;
+    assert.ok(/^[A-Z]$/.test(letter), `${id} 的门用一个字母`);
+    assert.ok(!m.exits[letter].to && !m.exits[letter].at, `${id}.${letter} 的门不再通到别的图`);
+    for (const row of m.rows) for (const c of row) assert.ok(c === "#" || c === "." || c === letter, `${id} 图上有图例以外的格子 ${c}`);
+    const doorCells = [];
+    m.rows.forEach((row, y) => [...row].forEach((c, x) => { if (c === letter) doorCells.push([x, y]); }));
+    assert.equal(doorCells.length, 1, `${id} 的门只有一格`);
+    assert.deepEqual(M.doorOf(id), doorCells[0], `${id} 的 doorOf`);
+    const [dx, dy] = doorCells[0];
+    assert.ok(M.isExit(id, dx, dy));
+    assert.ok(dx === 0 || dy === 0 || dx === width - 1 || dy === m.rows.length - 1, `${id} 的门开在外墙上`);
+    const entry = M.entryOf(id);
+    assert.ok(entry, `${id} 有进门的地方`);
+    const [ex, ey] = entry;
+    assert.equal(Math.abs(ex - dx) + Math.abs(ey - dy), 1, `${id} 进门的地方挨着门`);
+    assert.ok(M.standable(id, ex, ey) && M.placeable(id, ex, ey) && !M.isExit(id, ex, ey), `${id} 进门的地方 (${entry}) 是能站人的地面`);
+    const furn = furnitureCells(id);
+    assert.ok(!furn.has(ex + "," + ey), `${id} 进门的地方 (${entry}) 被家具挡住了`);
+    // 从进门的地方走得到屋里每一格没有家具的地面（家具不能把屋子隔断）
+    const seen = new Set([ex + "," + ey]), queue = [[ex, ey]];
+    while (queue.length) {
+      const [x, y] = queue.shift();
+      for (const [sx, sy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + sx, ny = y + sy, k = nx + "," + ny;
+        if (seen.has(k) || !M.placeable(id, nx, ny) || furn.has(k)) continue;
+        seen.add(k); queue.push([nx, ny]);
+      }
     }
+    m.rows.forEach((row, y) => [...row].forEach((c, x) => {
+      if (c === "." && !furn.has(x + "," + y)) assert.ok(seen.has(x + "," + y), `${id} 的 (${x},${y}) 从门口走不到`);
+    }));
+    assert.ok(!("plots" in m), `${id} 上不画游戏端的地块`);
   }
-  for (const [n, [x, y]] of Object.entries(M.MAPS.void_deck.plots)) assert.equal(M.tile("void_deck", x, y), n, `地块 ${n}`);
+  // 开局每个在场的人都站在自己家里能站人的地方，门口那一格空着
+  const s = H.createState();
+  for (const a of Object.values(s.actors)) {
+    if (!a.map) continue;
+    assert.ok(M.HOMES.includes(a.map), `${a.id} 在 ${a.map}`);
+    if (a.kind === "resident") assert.equal(a.map, W.RESIDENTS[a.household].home, `${a.id} 开局在自己家`);
+    assert.ok(H.canStand(s, a.map, a.x, a.y) || (a.kind === "player" && M.standable(a.map, a.x, a.y)), `${a.id} 站的 (${a.x},${a.y}) 不能站人`);
+  }
+  assert.deepEqual([s.actors.player.map, s.actors.player.x, s.actors.player.y], ["flat_chen"].concat(M.entryOf("flat_chen")), "玩家开局站在陈阿姨家进门的地方");
 });
 
 test("物件只能出现在允许的地图上", () => {
   for (const [k, p] of Object.entries(M.PROPS)) for (const m of p.maps) assert.ok(m === "*" || M.MAPS[m], `${k} 的地图 ${m}`);
-  assert.equal(M.propAllowed("wedding_tent", "void_deck"), true);
-  assert.equal(M.propAllowed("wedding_tent", "flat_lin"), false);
+  // 只在公共空间出现的东西（马来婚礼棚、灵堂、长凳、公告板、清洁推车、办公桌、鞋架、楼下的象棋桌）不再摆在地图上
+  for (const k of ["wedding_tent", "funeral_wake", "bench", "notice", "trolley", "desk", "shoe_rack", "chess_table"]) {
+    assert.ok(!M.PROPS[k], `${k} 已经拿掉了`);
+    for (const m of M.HOMES) assert.equal(M.propAllowed(k, m), false, `${k} 不能出现在 ${m}`);
+  }
+  for (const m of ["flat_chen", "flat_lin", "flat_aisyah", "flat_mei"]) assert.equal(M.propAllowed("kuih_tray", m), true, `马来糕可以送到 ${m}`);
+  assert.equal(M.propAllowed("long_table", "flat_aisyah"), true);
+  for (const m of M.HOMES.filter((x) => x !== "flat_aisyah")) assert.equal(M.propAllowed("long_table", m), false, `长木桌不能出现在 ${m}`);
+  assert.equal(M.propAllowed("sofa", "flat_chen"), false);
   assert.equal(M.propAllowed("kopi_cup", "dorm"), true);
+  // 固定家具也是物件：种类要有、要允许出现在这张图上、摆在地面上、一格只放一件
+  assert.deepEqual(Object.keys(M.FURNITURE).sort(), Object.keys(M.MAPS).sort());
+  for (const [map, list] of Object.entries(M.FURNITURE)) {
+    const cells = new Set();
+    for (const [kind, x, y] of list) {
+      assert.ok(M.PROPS[kind], `${map} 的家具 ${kind}`);
+      assert.ok(M.propAllowed(kind, map), `${kind} 不能出现在 ${map}，却是那里的固定家具`);
+      assert.ok(M.placeable(map, x, y), `${map} 的 ${kind} 摆在 (${x},${y})，不是地面`);
+      assert.ok(!cells.has(x + "," + y), `${map} 的 (${x},${y}) 摆了两件家具`);
+      cells.add(x + "," + y);
+    }
+  }
 });
