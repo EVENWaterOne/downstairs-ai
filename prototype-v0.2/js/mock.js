@@ -187,12 +187,22 @@
     return out;
   }
 
-  // 和 V2LLM.caller 一样的接口
-  function caller() {
+  // 和 V2LLM.caller 一样的接口。call 里带 onText（流式）时，把写好的 JSON 几个字一段地交出去，好看界面上边写边显示的样子；
+  // opts.delay 是每段之间等多少毫秒（默认 25，测试里给 0）
+  function caller(opts) {
+    const delay = opts && Number.isFinite(opts.delay) ? opts.delay : 25;
     return async (call) => {
       const body = call.role === "gm" ? gm(call.ctx) : character(call.ctx);
       const en = call.ctx && call.ctx.state && call.ctx.state.lang === "en";
-      return { text: JSON.stringify(body), meta: { model: en ? "offline demo" : "离线演示", ms: 0, provider: "mock" } };
+      const text = JSON.stringify(body);
+      if (typeof call.onText === "function") {
+        const chars = Array.from(text);
+        for (let i = 6; i < chars.length + 6; i += 6) {
+          if (delay > 0) await new Promise((ok) => setTimeout(ok, delay));
+          try { call.onText(chars.slice(0, i).join("")); } catch (e) { /* 忽略 */ }
+        }
+      }
+      return { text, meta: { model: en ? "offline demo" : "离线演示", ms: 0, provider: "mock" } };
     };
   }
 

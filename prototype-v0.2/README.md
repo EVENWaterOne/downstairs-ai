@@ -15,6 +15,7 @@
 - 你打的字都是话：对住户说是角色说出口的，在场的人都听得到；想做什么、想问什么，切到"对 GM"，住户听不到，GM 去做，再告诉你和在场的人结果
 - 有人来、走、换手上的事，地图会跟着变；GM 写到的无名配角（"老伯 ×3"）也画在地图上
 - GM 和住户由模型扮演；花政策点的事要你确认
+- GM 的叙述边写边显示（流式输出，设置里可以关）；写完、过了设定门才算数（设计说明 11.12）
 - 住户说方言或外语时，台词下面会给一句翻译
 - 右边的写字板：游戏端模拟（建设、政策、满意度）、你知道的事、每次模型调用的记录
 - 每次调用的 token 数和占上下文多少，每轮、整局的合计（claude.ai 内置的 Claude 不报用量，按字数估算）
@@ -47,7 +48,7 @@ python3 prototype-v0.2/tools/build_single.py out.html --artifact  # 发布到 cl
 - `js/harness.js`：规则层
 - `js/session.js`：对外接口
 - `js/board.js`、`js/days.js`：棋盘规则；日子和日程
-- `js/llm.js`、`js/tokens.js`、`js/prompts.js`、`js/turn.js`、`js/mock.js`：模型调用、token 数和上下文用量、提示词（中英两套）、一轮的流程、离线演示
+- `js/llm.js`、`js/tokens.js`、`js/prompts.js`、`js/turn.js`、`js/mock.js`、`js/stream.js`：模型调用、token 数和上下文用量、提示词（中英两套）、一轮的流程、离线演示、流式输出（读没写完的 JSON）
 - `js/render.js`、`js/app.js`、`index.html`、`styles.css`：界面
 
 ## 测试

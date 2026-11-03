@@ -561,9 +561,24 @@
     };
   }
 
+  // 住户重写用：代码只收没通过的那几栏，所以可以整段重给
   function retryNote(errors, lang) {
     if (lang === "en") return "Some parts of your last output did not pass the checks:\n" + errors.map((e) => `- ${e}`).join("\n") + "\nPlease output the whole JSON again, with those parts fixed and everything else unchanged.";
     return "上一次的输出有些地方没通过检查：\n" + errors.map((e) => `- ${e}`).join("\n") + "\n请重新输出完整的 JSON，把没通过的地方改掉，其余照旧。";
+  }
+  // GM 重给没通过的操作（11-02 试玩：以前也用上面那句"重新输出完整的 JSON，其余照旧"，后面再补一句"只输出改好的那几条"，
+  // 前后矛盾，GM 就把已经生效的叙述又写了一遍）。已经通过的已经做了，只要改好的那几条。
+  // passed 是已经通过的操作名；told：这一轮玩家已经看到了叙述（检定分支里写的也算），不给就按 passed 里有没有叙述算
+  function gmRetryNote(errors, passed, lang, told) {
+    const kinds = [...new Set(passed || [])];
+    if (told == null) told = kinds.includes("narrate") || kinds.includes("gm_reply");
+    if (lang === "en") return "Some ops in your last output did not pass the checks:\n" + errors.map((e) => `- ${e}`).join("\n")
+      + (kinds.length ? `\nThe rest (${kinds.join(", ")}) have already taken effect${told ? ", and the player has already read that narration" : ""}.` : "")
+      + "\nThis time output only the fixed ops: {\"ops\":[…]}. Don't write again the ones that already took effect"
+      + (told ? ", and don't retell the narration the player has already read" : "") + "; drop any you can't fix.";
+    return "上一次的输出有些操作没通过检查：\n" + errors.map((e) => `- ${e}`).join("\n")
+      + (kinds.length ? `\n其余的（${kinds.join("、")}）已经生效了${told ? "，那段叙述玩家已经看到了" : ""}。` : "")
+      + "\n这一次只输出改好的那几条：{\"ops\":[…]}。已经生效的不要再写" + (told ? "，玩家看过的叙述也不要换个说法再写一遍" : "") + "；改不了的就不要了。";
   }
 
   // ================= English =================
@@ -794,5 +809,5 @@
     return Object.assign({ system, seen: seenOf(history, thisRound) }, assemble(parts));
   }
 
-  root.V2Prompts = { DEFAULT_IDENTITY, DEFAULT_IDENTITY_EN, WINDOW_GM, WINDOW_CHAR, defaultIdentity, identityText, eventLine, windowOf, gmPrompt, characterPrompt, glossPrompt, retryNote, nameOf };
+  root.V2Prompts = { DEFAULT_IDENTITY, DEFAULT_IDENTITY_EN, WINDOW_GM, WINDOW_CHAR, defaultIdentity, identityText, eventLine, windowOf, gmPrompt, characterPrompt, glossPrompt, retryNote, gmRetryNote, nameOf };
 })(typeof window !== "undefined" ? window : globalThis);
